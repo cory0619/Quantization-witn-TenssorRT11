@@ -1,0 +1,821 @@
+<title>TensorRT 양자화 타입 해설</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: 좌측 고정 목차 + 본문 1단(최대 76ch). 다이어그램 색 규약은 원문과 동일: 녹색 = 양자화(저정밀), 파란색 = 고정밀. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --fg: #1a222c;
+  --muted: #5d6b7a;
+  --line: #d6dde5;
+  --q: #1f7f4a;        /* 양자화(저정밀) */
+  --q-bg: #e3f3ea;
+  --hp: #2a67a8;       /* 고정밀 */
+  --hp-bg: #e6eff9;
+  --warn: #9a6a12;
+  --warn-bg: #fbf1dc;
+  --code-bg: #eceff3;
+  --mine: #6b4fb0;     /* 원문 외 메모 */
+  --mine-bg: #f0ebfa;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", Consolas, "D2Coding", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1319; --surface: #151c25; --fg: #e4e8ee; --muted: #98a4b2; --line: #28323e;
+    --q: #4fc48c; --q-bg: #123022; --hp: #74acea; --hp-bg: #142639;
+    --warn: #e2b55d; --warn-bg: #2d2411; --code-bg: #1b2430; --mine: #b39ae8; --mine-bg: #241d35;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1319; --surface: #151c25; --fg: #e4e8ee; --muted: #98a4b2; --line: #28323e;
+  --q: #4fc48c; --q-bg: #123022; --hp: #74acea; --hp-bg: #142639;
+  --warn: #e2b55d; --warn-bg: #2d2411; --code-bg: #1b2430; --mine: #b39ae8; --mine-bg: #241d35;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 15.5px; line-height: 1.7;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0;
+  word-break: keep-all; overflow-wrap: anywhere;
+}
+a { color: var(--hp); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--hp); outline-offset: 2px; }
+
+.wrap { max-width: 1120px; margin: 0 auto; }
+header.top { padding-block: 40px 28px; border-bottom: 1px solid var(--line); }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { font-size: clamp(28px, 4vw, 38px); line-height: 1.2; margin: 8px 0 12px; font-weight: 700; text-wrap: balance; letter-spacing: -.01em; }
+.lede { color: var(--muted); max-width: 72ch; margin: 0; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 16px; font-size: 13.5px; color: var(--muted); }
+.meta code { font-size: 12.5px; }
+
+.layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 48px; padding-block: 32px 80px; }
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); align-self: start; font-size: 13.5px; max-height: calc(100vh - 32px); overflow-y: auto; }
+nav.toc .group { color: var(--muted); font-family: var(--font-mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; margin: 14px 0 6px; }
+nav.toc .group:first-child { margin-top: 0; }
+nav.toc a { display: block; color: var(--fg); text-decoration: none; padding: 3px 0 3px 10px; border-left: 2px solid var(--line); line-height: 1.45; }
+nav.toc a:hover { border-color: var(--hp); color: var(--hp); }
+nav.toc summary { display: none; }
+main { min-width: 0; max-width: 76ch; }
+
+section { padding-block: 8px 28px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+section:last-of-type { border-bottom: 0; }
+h2 { font-size: 24px; line-height: 1.3; margin: 18px 0 10px; font-weight: 700; text-wrap: balance; letter-spacing: -.01em; }
+h2 .num { font-family: var(--font-mono); font-weight: 500; color: var(--muted); font-size: 15px; margin-right: 10px; }
+h3 { font-size: 18px; margin: 26px 0 8px; font-weight: 600; text-wrap: balance; }
+h4 { font-size: 15.5px; margin: 18px 0 6px; font-weight: 600; }
+p { margin: 0 0 12px; }
+ul, ol { margin: 0 0 12px; padding-left: 22px; }
+li { margin-bottom: 4px; }
+li > ul, li > ol { margin-top: 4px; }
+strong { font-weight: 600; }
+small, .small { font-size: 13px; color: var(--muted); }
+
+code, pre, .formula { font-family: var(--font-mono); }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; font-size: .9em; }
+pre { background: var(--code-bg); padding: 12px 14px; border-radius: 6px; overflow-x: auto; font-size: 13px; line-height: 1.55; margin: 8px 0 14px; }
+pre code { background: none; padding: 0; font-size: inherit; }
+.formula { background: var(--code-bg); border-left: 3px solid var(--line); padding: 10px 14px; margin: 8px 0 12px; font-size: 14px; line-height: 1.8; overflow-x: auto; white-space: nowrap; }
+.formula .lbl { color: var(--muted); font-size: 12px; display: block; white-space: normal; }
+var { font-style: italic; }
+sub, sup { font-size: .75em; line-height: 0; }
+.where { font-size: 14px; color: var(--muted); margin: -4px 0 12px; }
+.where li { margin-bottom: 2px; }
+
+/* callouts */
+.callout { border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; margin: 14px 0; font-size: 14.5px; }
+.callout .tag { font-family: var(--font-mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; display: block; margin-bottom: 4px; }
+.callout.note { border-color: var(--hp); background: var(--hp-bg); } .callout.note .tag { color: var(--hp); }
+.callout.warn { border-color: var(--warn); background: var(--warn-bg); } .callout.warn .tag { color: var(--warn); }
+.callout.mine { border: 1px dashed var(--mine); background: var(--mine-bg); } .callout.mine .tag { color: var(--mine); }
+.callout p:last-child, .callout ul:last-child { margin-bottom: 0; }
+
+/* tables */
+.tbl { overflow-x: auto; margin: 10px 0 16px; border: 1px solid var(--line); border-radius: 6px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 520px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { background: var(--code-bg); font-weight: 600; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.y { color: var(--q); font-weight: 600; } td.n { color: var(--muted); }
+caption { caption-side: bottom; text-align: left; font-size: 12.5px; color: var(--muted); padding: 8px 12px; }
+.num-col { font-variant-numeric: tabular-nums; }
+
+/* 요약 카드 */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 14px 0 6px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; font-size: 14px; }
+.card .k { font-weight: 600; margin-bottom: 4px; }
+.card p { margin: 0; color: var(--muted); }
+
+/* 비트 배치 */
+.bits { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 6px 0 10px; font-size: 13.5px; }
+.bits .name { min-width: 150px; font-weight: 600; }
+.bits .row { display: inline-flex; gap: 2px; }
+.bits .b { width: 22px; height: 26px; display: inline-grid; place-items: center; font-family: var(--font-mono); font-size: 12px; border: 1px solid var(--line); border-radius: 3px; background: var(--surface); }
+.bits .b.s { background: var(--code-bg); } .bits .b.e { background: var(--hp-bg); color: var(--hp); } .bits .b.m { background: var(--q-bg); color: var(--q); }
+.bits .rng { color: var(--muted); font-family: var(--font-mono); font-size: 12.5px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--muted); margin: 4px 0 12px; }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: -2px; margin-right: 5px; border: 1px solid var(--line); }
+
+/* 플로우 칩 */
+.flow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 2px; margin: 8px 0 6px; font-family: var(--font-mono); font-size: 13px; }
+.flow .chip { border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; background: var(--surface); }
+.flow .chip.q { border-color: var(--q); background: var(--q-bg); color: var(--q); }
+.flow .chip.hp { border-color: var(--hp); background: var(--hp-bg); color: var(--hp); }
+.flow .chip.pl { border-style: dashed; }
+.flow .arr { padding: 0 3px; font-weight: 500; }
+.flow .arr.fp { color: var(--hp); } .flow .arr.i8 { color: var(--q); }
+.flow .fuse { display: inline-flex; align-items: center; gap: 2px; border: 2px solid var(--q); border-radius: 6px; padding: 2px 4px; }
+.flow-cap { font-size: 13px; color: var(--muted); margin: 0 0 14px; }
+
+/* figures / svg */
+figure { margin: 16px 0 18px; }
+figure svg { max-width: 100%; height: auto; display: block; color: var(--fg); }
+figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.sq { fill: var(--q-bg); stroke: var(--q); stroke-width: 1.5; }
+.sh { fill: var(--hp-bg); stroke: var(--hp); stroke-width: 1.5; }
+.sn { fill: var(--surface); stroke: currentColor; stroke-width: 1.2; }
+.lq { stroke: var(--q); stroke-width: 2; fill: none; }
+.lh { stroke: var(--hp); stroke-width: 2; fill: none; }
+.ln { stroke: currentColor; stroke-width: 1.2; fill: none; }
+.tx { font-family: var(--font-body); font-size: 12px; fill: currentColor; }
+.tm { font-family: var(--font-mono); font-size: 11.5px; fill: currentColor; }
+.tq { fill: var(--q); } .th2 { fill: var(--hp); } .tmu { fill: var(--muted); }
+.fuse-box { fill: none; stroke: var(--q); stroke-width: 2; stroke-dasharray: 5 4; }
+.grid-cell { fill: var(--surface); stroke: var(--line); }
+.cell-a { fill: var(--q-bg); } .cell-b { fill: var(--hp-bg); } .cell-c { fill: var(--warn-bg); } .cell-d { fill: var(--code-bg); }
+
+.steps { counter-reset: s; list-style: none; padding-left: 0; }
+.steps li { counter-increment: s; position: relative; padding-left: 36px; margin-bottom: 8px; }
+.steps li::before { content: counter(s); position: absolute; left: 0; top: 2px; width: 24px; height: 24px; border-radius: 50%; background: var(--code-bg); border: 1px solid var(--line); display: grid; place-items: center; font-family: var(--font-mono); font-size: 12px; }
+
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-size: 14px; margin: 8px 0 12px; }
+.kv dt { font-weight: 600; } .kv dd { margin: 0; color: var(--muted); }
+
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; gap: 20px; }
+  nav.toc { position: static; max-height: none; }
+  nav.toc summary { display: list-item; cursor: pointer; font-weight: 600; padding: 8px 0; }
+  nav.toc details { border: 1px solid var(--line); border-radius: 6px; padding: 4px 14px 10px; background: var(--surface); }
+  .bits .name { min-width: 100%; }
+  .kv { grid-template-columns: 1fr; gap: 0 } .kv dd { margin-bottom: 6px; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+html { scroll-behavior: smooth; }
+</style>
+
+<div class="wrap">
+<header class="top">
+  <div class="eyebrow">NVIDIA TensorRT 10.x · Inference Library · Working with Quantized Types</div>
+  <h1>TensorRT 양자화 타입 해설</h1>
+  <p class="lede">TensorRT가 INT8·FP8·INT4·FP4를 어떤 수식으로 양자화하고, Q/DQ 노드를 그래프에서 어떻게 옮기고 융합하는지, 그리고 왜 Explicit 양자화만 남고 Implicit 방식은 폐기되었는지를 원문 순서대로 풀어 쓴 가이드입니다.</p>
+  <div class="meta">
+    <span>원문: <a href="https://docs.nvidia.com/deeplearning/tensorrt/10.x.x/inference-library/work-quantized-types.html">docs.nvidia.com … work-quantized-types.html</a></span>
+    <span>정리일 2026-10-23</span>
+    <span>원문 상태: 아카이브(10.x 문서, 더 이상 갱신되지 않음)</span>
+  </div>
+  <div class="legend" style="margin-top:12px">
+    <span><i style="background:var(--q-bg);border-color:var(--q)"></i>녹색 = 양자화(저정밀) 텐서/연산</span>
+    <span><i style="background:var(--hp-bg);border-color:var(--hp)"></i>파란색 = 고정밀(FP32/FP16/BF16)</span>
+    <span><i style="background:var(--mine-bg);border-color:var(--mine)"></i>보라 점선 = 원문에 없는 정리자 메모</span>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="목차">
+<details open>
+<summary>목차</summary>
+<div class="group">기초</div>
+<a href="#overview">한눈에 보기</a>
+<a href="#intro">1. 양자화란</a>
+<a href="#workflow">2. PTQ vs QAT</a>
+<a href="#explicit">3. Explicit vs Implicit</a>
+<a href="#granularity">4. 스케일 적용 단위</a>
+<a href="#rounding">5. 라운딩 모드</a>
+<a href="#dynamic">6. 동적 양자화</a>
+<a href="#schemes">7. 타입별 양자화 수식</a>
+<div class="group">Explicit 양자화 상세</div>
+<a href="#weights">8. 양자화된 가중치 저장</a>
+<a href="#onnx">9. ONNX 지원</a>
+<a href="#processing">10. Q/DQ 그래프 처리</a>
+<a href="#woq">11. Weight-Only 양자화</a>
+<a href="#placement">12. Q/DQ 배치 권고</a>
+<a href="#limits">13. 제약과 플러그인</a>
+<a href="#qat">14. QAT 프레임워크</a>
+<div class="group">Implicit (폐기)</div>
+<a href="#implicit">15. Implicit 양자화</a>
+<div class="group">부록</div>
+<a href="#notes">프로젝트 적용 메모</a>
+</details>
+</nav>
+
+<main>
+
+<section id="overview">
+  <h2>한눈에 보기</h2>
+  <div class="cards">
+    <div class="card"><div class="k">대칭 양자화 하나로 통일</div><p>영점(zero-point) 없이 스케일 <var>s</var> 하나로 변환. <var>x<sub>q</sub></var> = round(clip(<var>x</var>/<var>s</var>)), <var>x</var> ≈ <var>x<sub>q</sub></var>·<var>s</var>.</p></div>
+    <div class="card"><div class="k">지원 타입 4종</div><p>INT8, INT4(가중치 전용), FP8 E4M3, FP4 E2M1. 여기에 블록 스케일 변형인 MXFP8, NVFP4가 더해집니다.</p></div>
+    <div class="card"><div class="k">Explicit(Q/DQ)만 권장</div><p>그래프 안의 Q/DQ 노드가 변환 위치를 결정. Implicit(캘리브레이터, 동적 범위 API)은 INT8 전용이며 폐기(deprecated).</p></div>
+    <div class="card"><div class="k">스케일 단위 3종</div><p>per-tensor, per-channel(축 1개), per-block(한 축을 고정 크기 블록으로). 세밀할수록 정확하지만 비용 증가.</p></div>
+    <div class="card"><div class="k">배치 원칙</div><p>가중 연산(Conv/GEMM) 입력은 양자화, 출력은 기본적으로 양자화하지 않음. 활성화는 per-tensor, 가중치는 per-channel.</p></div>
+    <div class="card"><div class="k">최적화는 융합이 전부</div><p>TensorRT는 Q를 뒤로, DQ를 앞으로 밀어 저정밀 구간을 최대화하고, 양자화 가능 레이어를 DQ·Q와 묶어 하나의 양자화 커널로 바꿉니다.</p></div>
+  </div>
+</section>
+
+<section id="intro">
+  <h2><span class="num">1</span>양자화란</h2>
+  <p>양자화는 부동소수점 값을 더 낮은 정밀도의 자료형으로 표현해 모델 크기를 줄이고 연산을 빠르게 하는 기법입니다. 원문이 드는 이점은 네 가지입니다. 메모리 사용량 감소, 에너지 효율 향상, 자원이 제한된 엣지 기기에 배포 가능, 대규모 데이터센터에서의 비용 효율.</p>
+  <h3>대칭(symmetric) 양자화</h3>
+  <p>TensorRT는 활성화와 가중치 모두를 0을 중심으로 대칭인 양자화 값으로 매핑합니다. 비대칭 방식과 달리 영점 오프셋이 없어서, 양자화 표현과 부동소수점 표현 사이의 변환이 보통 스케일 계수 하나로 끝납니다.</p>
+  <h3>지원 자료형</h3>
+  <div class="legend">
+    <span><i style="background:var(--code-bg)"></i>S 부호</span>
+    <span><i style="background:var(--hp-bg);border-color:var(--hp)"></i>E 지수</span>
+    <span><i style="background:var(--q-bg);border-color:var(--q)"></i>M 가수</span>
+  </div>
+  <div class="bits"><span class="name">INT8 (부호 있는 8비트 정수)</span><span class="row"><span class="b s">S</span><span class="b">7</span><span class="b">6</span><span class="b">5</span><span class="b">4</span><span class="b">3</span><span class="b">2</span><span class="b">1</span></span><span class="rng">2의 보수, [-128, 127]</span></div>
+  <div class="bits"><span class="name">INT4 (부호 있는 4비트 정수)</span><span class="row"><span class="b s">S</span><span class="b">3</span><span class="b">2</span><span class="b">1</span></span><span class="rng">2의 보수, [-8, 7] · 가중치 전용</span></div>
+  <div class="bits"><span class="name">FP8 E4M3</span><span class="row"><span class="b s">S</span><span class="b e">E</span><span class="b e">E</span><span class="b e">E</span><span class="b e">E</span><span class="b m">M</span><span class="b m">M</span><span class="b m">M</span></span><span class="rng">지수 4비트 + 가수 3비트, [-448, 448]</span></div>
+  <div class="bits"><span class="name">FP4 E2M1</span><span class="row"><span class="b s">S</span><span class="b e">E</span><span class="b e">E</span><span class="b m">M</span></span><span class="rng">지수 2비트 + 가수 1비트, [-6, 6]</span></div>
+  <div class="bits"><span class="name">E8M0 (스케일 전용)</span><span class="row"><span class="b e">E</span><span class="b e">E</span><span class="b e">E</span><span class="b e">E</span><span class="b e">E</span><span class="b e">E</span><span class="b e">E</span><span class="b e">E</span></span><span class="rng">지수만 있는 8비트, MXFP8의 블록 스케일에 사용</span></div>
+  <p class="small">비트 배치 그림은 타입 이름(S1E4M3 등)을 그대로 풀어 그린 것이며, 범위 값은 원문 7장의 수식에서 가져왔습니다. E8M0은 원문의 "Supported Types" 장을 참조하라고만 되어 있습니다.</p>
+</section>
+
+<section id="workflow">
+  <h2><span class="num">2</span>양자화 워크플로우: PTQ와 QAT</h2>
+  <p>TensorRT는 학습 후 양자화(PTQ)와 양자화 인식 학습(QAT)을 모두 지원합니다. 스케일은 per-tensor, per-channel, 블록 단위 중 하나로 적용되며, 어느 방식을 쓰는지는 레이어와 자료형에 따라 다릅니다.</p>
+  <div class="tbl"><table>
+    <thead><tr><th></th><th>PTQ (Post-Training Quantization)</th><th>QAT (Quantization-Aware Training)</th></tr></thead>
+    <tbody>
+      <tr><td>방법</td><td>이미 학습된 모델을 재학습 없이 양자화</td><td>학습 중 가중치와 활성화를 양자화해 양자화 효과를 시뮬레이션</td></tr>
+      <tr><td>필요한 것</td><td>양자화 파라미터를 계산할 대표 "캘리브레이션 데이터"</td><td>레이블이 있는 전체 학습 데이터셋</td></tr>
+      <tr><td>장점</td><td>재학습이 불가능한 경우(자원 제한, 데이터 프라이버시)에 실용적</td><td>학습이 양자화/역양자화 오차를 능동적으로 보정해 PTQ보다 정확도 회복이 우수</td></tr>
+      <tr><td>단점</td><td>복잡한 모델이나 민감한 레이어에서 정확도 저하 가능</td><td>시간이 더 들고 전체 데이터 접근이 필요</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>TensorRT Model Optimizer</strong>는 QAT 모델을 만들기 위한 Python 툴킷으로, 결과 모델은 TensorRT 최적화·배포 워크플로우와 완전히 호환됩니다. PTQ 레시피도 제공하여 PyTorch 모델과 ONNX 모델 양쪽에 PTQ를 적용할 수 있습니다.</p>
+</section>
+
+<section id="explicit">
+  <h2><span class="num">3</span>Explicit vs Implicit 양자화</h2>
+  <div class="callout warn"><span class="tag">원문 Note</span>Implicit 양자화는 폐기(deprecated)되었습니다. Model Optimizer로 Explicit 양자화 모델을 만들어 전환할 것을 강력히 권고합니다.</div>
+  <p>양자화된 네트워크는 두 방식 중 하나(상호 배타적)로 처리됩니다. 차이는 "누가 양자화 위치를 정하는가"입니다.</p>
+  <ul>
+    <li><strong>Explicit</strong>: 네트워크에 <code>IQuantizeLayer</code>/<code>IDequantizeLayer</code>(이하 Q/DQ)가 있으면 이 모드. Q/DQ가 양자화·역양자화 지점을 명시적으로 제어합니다.</li>
+    <li><strong>Implicit</strong>: Q/DQ가 없고 빌더 설정에 INT8과 weak typing이 켜져 있으면 이 모드. INT8만 지원하며, weak typing과 함께만 쓸 수 있고 둘 다 폐기되었습니다.</li>
+  </ul>
+  <h3>Implicit 모드의 동작</h3>
+  <p>캘리브레이션 또는 <code>setDynamicRange</code> API로 스케일이 할당된 활성화 텐서가 양자화 후보가 됩니다. TensorRT는 그래프 최적화 시 모델을 부동소수점 모델로 다루고, 레이어 실행 시간을 줄일 수 있을 때만 "기회주의적으로" INT8을 씁니다. 어떤 레이어가 INT8에서 더 빠르고 입출력에 스케일이 있으면 INT8 커널, 아니면 고정밀(FP32/FP16/BF16) 커널이 배정됩니다.</p>
+  <h3>Explicit 모드의 동작</h3>
+  <p>Q/DQ 노드가 변환 위치를 정확히 지정하고, 옵티마이저는 모델 의미론이 요구하는 변환만 수행합니다. PyTorch나 TensorFlow 모델을 ONNX로 내보내면 프레임워크의 fake-quantization 연산이 Q 뒤에 DQ가 붙는 형태로 내보내지므로 ONNX는 본질적으로 Explicit 표현입니다. TensorRT는 이 레이어의 의미론을 보존하므로 프레임워크에서 본 정확도에 매우 근접한 결과를 기대할 수 있습니다. 단, 부동소수점 연산 순서가 바뀔 수 있어 비트 단위로 동일하지는 않습니다.</p>
+  <h3>Explicit의 장점 (원문 4가지)</h3>
+  <ul>
+    <li><strong>넓은 자료형 지원</strong>: INT8, FP8, INT4, FP4.</li>
+    <li><strong>직접 제어</strong>: Q/DQ 노드로 변환 지점을 정밀하게 지정.</li>
+    <li><strong>모델 의미론 보존</strong>: 모델이 요구하는 변환만 수행하므로 원 프레임워크 정확도에 근접.</li>
+    <li><strong>ONNX 내보내기와 자연스럽게 호환</strong>: 프레임워크에서 QAT/PTQ 후 ONNX로 내보내면 그대로 Explicit 모델.</li>
+  </ul>
+  <div class="callout note"><span class="tag">중요</span>Q/DQ 노드가 있는 모델에는 외부 캘리브레이션 테이블을 주면 안 됩니다. Q/DQ가 이미 있으면 TensorRT는 캘리브레이션 테이블 로드를 허용하지 않습니다. 즉 Explicit 모델의 캘리브레이션은 ONNX 내보내기 전(Model Optimizer의 PTQ/QAT 단계)에 끝나며, 결과 스케일은 Q/DQ 노드 안에 들어 있습니다.</div>
+  <p>Implicit 양자화와 weak typing은 본질적으로 묶여 있습니다. INT8으로의 변환 여부가 빌더 내부 휴리스틱에만 의존하므로 weak typing이 필요합니다. 둘 다 제어력이 떨어지고 자료형 범위가 좁아 폐기되었습니다. 일부 네트워크에서는 초기 Explicit 양자화가 Implicit보다 지연시간이 길 수 있는데, Model Optimizer 팀이 TensorRT 팀과 함께 이 격차를 줄이는 중이라고 원문은 밝힙니다.</p>
+  <div class="tbl"><table>
+    <caption>원문 Table 10. Implicit vs Explicit Quantization</caption>
+    <thead><tr><th></th><th>Implicit (폐기)</th><th>Explicit</th></tr></thead>
+    <tbody>
+      <tr><td>지원 양자화 자료형</td><td>INT8</td><td>INT8, FP8, INT4, FP4</td></tr>
+      <tr><td>정밀도 제어 방식</td><td>전역 빌더 플래그 + 레이어별 precision API</td><td>모델 안에 직접 인코딩</td></tr>
+      <tr><td>API</td><td>모델 + 스케일(동적 범위 API), 또는 모델 + 캘리브레이션 데이터</td><td>Q/DQ 레이어가 포함된 모델</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="granularity">
+  <h2><span class="num">4</span>스케일 적용 단위 (Granularity)</h2>
+  <p>Granularity는 스케일 계수를 텐서에 어떤 단위로 적용하느냐입니다. 세밀하게 나눌수록 정확도는 올라가지만 스케일을 관리하는 연산·메모리 비용도 늘어납니다. TensorRT는 세 가지를 지원합니다.</p>
+  <figure>
+    <svg viewBox="0 0 760 190" role="img" aria-label="per-tensor는 텐서 전체가 스케일 하나, per-channel은 출력 채널 축 K마다 스케일 하나, per-block은 블록 축을 크기 B로 나눠 블록마다 스케일 하나를 가진다">
+      <!-- per-tensor -->
+      <text class="tx" x="20" y="22" font-weight="600">per-tensor</text>
+      <rect class="grid-cell cell-a" x="20" y="34" width="180" height="100" rx="3"/>
+      <text class="tm tq" x="110" y="90" text-anchor="middle">scale (스칼라 1개)</text>
+      <text class="tx tmu" x="20" y="160">텐서 전체에 같은 s</text>
+      <!-- per-channel -->
+      <text class="tx" x="280" y="22" font-weight="600">per-channel (축 K)</text>
+      <rect class="grid-cell cell-a" x="280" y="34" width="180" height="25"/>
+      <rect class="grid-cell cell-b" x="280" y="59" width="180" height="25"/>
+      <rect class="grid-cell cell-c" x="280" y="84" width="180" height="25"/>
+      <rect class="grid-cell cell-d" x="280" y="109" width="180" height="25"/>
+      <text class="tm" x="470" y="51">s[0]</text><text class="tm" x="470" y="76">s[1]</text><text class="tm" x="470" y="101">s[2]</text><text class="tm" x="470" y="126">s[3]</text>
+      <text class="tx tmu" x="280" y="160">K(출력 채널)마다 s 하나, 길이 K 벡터</text>
+      <!-- per-block -->
+      <text class="tx" x="540" y="22" font-weight="600">per-block (축 R, 블록 B)</text>
+      <rect class="grid-cell cell-a" x="540" y="34" width="45" height="50"/><rect class="grid-cell cell-b" x="585" y="34" width="45" height="50"/><rect class="grid-cell cell-c" x="630" y="34" width="45" height="50"/><rect class="grid-cell cell-d" x="675" y="34" width="45" height="50"/>
+      <rect class="grid-cell cell-d" x="540" y="84" width="45" height="50"/><rect class="grid-cell cell-a" x="585" y="84" width="45" height="50"/><rect class="grid-cell cell-b" x="630" y="84" width="45" height="50"/><rect class="grid-cell cell-c" x="675" y="84" width="45" height="50"/>
+      <text class="tm" x="562" y="63" text-anchor="middle">B</text>
+      <line class="ln" x1="540" y1="140" x2="585" y2="140"/><line class="ln" x1="540" y1="136" x2="540" y2="144"/><line class="ln" x1="585" y1="136" x2="585" y2="144"/>
+      <text class="tx tmu" x="540" y="160">축 하나를 B개씩 묶어 블록마다 s</text>
+      <text class="tx tmu" x="540" y="178">스케일 모양 (ceil(R/B), S)</text>
+    </svg>
+    <figcaption>세 granularity의 차이. 색이 같은 영역은 같은 스케일을 공유한다.</figcaption>
+  </figure>
+  <h3>per-tensor</h3>
+  <p>스칼라 하나로 텐서 전체를 스케일링합니다.</p>
+  <h3>per-channel</h3>
+  <p>스케일 텐서를 지정한 축을 따라 브로드캐스트합니다. CNN에서는 보통 채널 축입니다. <strong>Convolution에 per-channel을 쓸 때 양자화 축은 반드시 출력 채널 축</strong>이어야 합니다. 2D 컨볼루션 가중치를 KCRS로 표기하면 K가 출력 채널 축이고, 양자화는 다음과 같습니다.</p>
+<pre><code>For each k in K:
+  For each c in C:
+    For each r in R:
+      For each s in S:
+        output[k,c,r,s] := clamp(round(input[k,c,r,s] / scale[k]))</code></pre>
+  <p>스케일은 양자화 축과 같은 길이의 벡터입니다. 역양자화는 점별 연산만 다릅니다.</p>
+<pre><code>output[k,c,r,s] := input[k,c,r,s] * scale[k]</code></pre>
+  <h3>블록(block) 양자화</h3>
+  <p>요소를 블록으로 묶고, 한 블록 안의 모든 요소가 스케일 하나를 공유합니다. 입력은 최대 3차원까지 지원됩니다.</p>
+  <ul>
+    <li>INT4 블록 양자화는 가중치 전용(WoQ)입니다.</li>
+    <li>FP4 블록 양자화는 가중치와 활성화 모두 지원합니다. 활성화는 양자화 오차를 줄이기 위해 동적 양자화(6장)를 권장합니다.</li>
+  </ul>
+  <p>스케일 텐서의 차원은 블록을 나누는 축(blocking axis) 하나만 빼고 데이터 텐서와 같습니다. 2D 가중치 RS에서 R(차원 0)이 블록 축이고 블록 크기가 B이면:</p>
+<pre><code>For each r in R:
+  For each s in S:
+    output[r,s] = clamp(round(input[r,s] / scale[ceil(r//B), s]))</code></pre>
+  <p>스케일은 (ceil(R//B), S) 모양의 2D 배열입니다. 역양자화는 <code>output[r,s] = input[r,s] * scale[ceil(r//B), s]</code>.</p>
+</section>
+
+<section id="rounding">
+  <h2><span class="num">5</span>라운딩 모드</h2>
+  <p>TensorRT는 주로 <strong>round-to-nearest-even</strong>("은행가 반올림")을 씁니다. 정확히 중간값이면 짝수로 반올림합니다(2.5 → 2, 3.5 → 4). 항상 올리거나 내리는 방식에서 생기는 체계적 편향(한쪽으로의 지속적 드리프트)을 줄여 줍니다.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>백엔드</th><th>연산 커널 양자화 (FP32 → INT8/FP8)</th><th>가중치 양자화, Explicit</th><th>가중치 양자화, Implicit (INT8만)</th></tr></thead>
+    <tbody>
+      <tr><td>GPU</td><td>ties-to-even</td><td>ties-to-even (INT8, FP8, INT4, FP4)</td><td><strong>ties-to-positive-infinity</strong></td></tr>
+      <tr><td>DLA</td><td>ties-to-even</td><td>N/A</td><td>ties-to-even</td></tr>
+    </tbody>
+  </table></div>
+  <p class="small">GPU에서 Implicit 모드의 가중치 양자화만 유일하게 +∞ 쪽 반올림(2.5 → 3)을 쓴다는 점이 예외입니다. 더 자세한 내용은 원문의 "Rounding" 장을 참조하라고 안내합니다.</p>
+</section>
+
+<section id="dynamic">
+  <h2><span class="num">6</span>동적 양자화 (Dynamic Quantization)</h2>
+  <p>스케일을 미리 정하지 않고 <strong>추론 중에 입력 데이터로부터 계산</strong>하는 방식입니다. 출력은 두 개, 양자화된 데이터와 스케일입니다. TensorRT는 블록 granularity에서만 동적 양자화를 지원합니다.</p>
+  <ul>
+    <li><strong>정확도</strong>: 블록 하나의 동적 범위만 양자화 타입에 매핑합니다. 블록의 범위는 텐서 전체 범위보다 훨씬 좁은 경우가 많아 양자화 오차가 줄어듭니다. 표현 가능한 값이 몇 개 안 되는 서브바이트 타입(FP4 등)에서 특히 중요합니다.</li>
+    <li><strong>PTQ 부담 감소</strong>: 스케일이 추론 중 자동 계산되므로 샘플 데이터로 스케일을 캘리브레이션할 필요가 없습니다.</li>
+  </ul>
+  <div class="formula"><span class="lbl">블록별 스케일</span>scale = max<sub>i ∈ {0 … blockSize−1}</sub> ( |x<sub>i</sub>| / qTypeMax )</div>
+  <ul class="where"><li>qTypeMax: 양자화 타입의 최댓값 (예: FP4E2M1은 6)</li></ul>
+
+  <h3>MX 호환 동적 양자화 (MXFP8)</h3>
+  <p>OCP Microscaling Formats(MX) 사양 v1.0을 따르는 동적 양자화입니다. 고정밀 요소 32개를 묶어 양자화 값 32개와 <strong>E8M0 스케일 1개</strong>를 만듭니다. TensorRT는 현재 FP8E4M3 벡터 형식(MXFP8)에서만 지원합니다.</p>
+  <div class="formula"><span class="lbl">블록 하나의 스케일</span>scale<sub>E8M0</sub> = round_up_to_e8m0( max<sub>i</sub> ( |x<sub>i</sub>| / qTypeMax ) )</div>
+  <ul class="where">
+    <li>E8M0: 지수만 있는 8비트 부동소수점 타입</li>
+    <li>round_up_to_e8m0: 계산된 스케일보다 크거나 같은 가장 작은 2의 거듭제곱으로 올림</li>
+    <li>블록마다 반복하여 총 inputVolume / blockSize 개의 스케일을 계산</li>
+  </ul>
+
+  <h3>동적 이중 양자화 (Dynamic Double Quantization, NVFP4)</h3>
+  <p>계산된 스케일까지 다시 양자화하는 변형입니다. 현재 <strong>NVFP4</strong> 벡터 형식(FP4E2M1 데이터, FP8E4M3 스케일, 블록 크기 16)에서만 지원합니다.</p>
+  <div class="formula"><span class="lbl">스케일 계산 + 스케일 양자화</span>scale<sub>quantized</sub> = quantize( max<sub>i</sub> ( |x<sub>i</sub>| / qTypeMax ), scale = globalSf )</div>
+  <ul class="where"><li>globalSf: 오프라인에서 캘리브레이션한 per-tensor 스케일(스칼라)</li></ul>
+  <div class="formula"><span class="lbl">qTypeMax = 6, FP8 범위 [-448, 448]을 대입하면</span>scale<sub>fp8</sub> = castToFp8( max<sub>i</sub> |x<sub>i</sub>| / (6 · globalSf) )</div>
+  <p>데이터는 이 스케일로 블록 양자화됩니다. 역양자화는 <strong>Dequantize를 두 번</strong> 연속으로 수행해야 합니다(그래서 "이중"). 먼저 per-tensor 스케일 globalSf로 스케일을 복원하고, 그 스케일로 데이터를 복원합니다.</p>
+  <div class="formula">data<sub>DQ</sub> = dequantize( data<sub>Q</sub>, dequantize( scale<sub>Q</sub>, scale = globalSf ) )</div>
+  <div class="flow">
+    <span class="chip hp">x (hp, 블록 16)</span><span class="arr">→</span>
+    <span class="chip">max|x| / 6</span><span class="arr">→</span>
+    <span class="chip">÷ globalSf</span><span class="arr">→</span>
+    <span class="chip q">castToFp8 → scale_fp8</span>
+  </div>
+  <div class="flow">
+    <span class="chip hp">x</span><span class="arr">→</span>
+    <span class="chip">÷ (scale_fp8 · globalSf)</span><span class="arr">→</span>
+    <span class="chip q">castToFp4 → data_fp4</span>
+  </div>
+  <p class="flow-cap">원문 그림은 이 과정이 GEMM과 융합되는 예를 보여줍니다(hp = 고정밀, sf = 스케일 계수). 위 플로우는 수식을 단계로 풀어 쓴 것입니다.</p>
+</section>
+
+<section id="schemes">
+  <h2><span class="num">7</span>타입별 양자화 수식</h2>
+  <p>모든 스킴의 역양자화는 동일하게 <var>x</var> = <var>x<sub>q</sub></var> · <var>s</var> 입니다. 차이는 양자화 쪽의 클리핑 범위와 반올림/캐스팅 함수입니다.</p>
+
+  <h3>INT8</h3>
+  <div class="formula">x<sub>q</sub> = quantize(x, s) = roundWithTiesToEven( clip( x / s, −128, 127 ) )<br>x = dequantize(x<sub>q</sub>, s) = x<sub>q</sub> · s</div>
+  <ul class="where">
+    <li>x: 양자화할 고정밀 부동소수점 값 · x<sub>q</sub>: [-128, 127] 범위의 INT8 값</li>
+    <li>s: 16비트 또는 32비트 부동소수점 스칼라 스케일</li>
+  </ul>
+  <p>Implicit 모드에서 TensorRT가 가중치 스케일을 계산하는 식:</p>
+  <div class="formula">s = max( |x<sup>ch</sup><sub>min</sub>|, |x<sup>ch</sup><sub>max</sub>| ) / 127</div>
+  <p class="where">x<sup>ch</sup><sub>min</sub>, x<sup>ch</sup><sub>max</sub>는 가중치 텐서 채널 ch의 최솟값·최댓값.</p>
+
+  <h3>FP8</h3>
+  <div class="formula">x<sub>q</sub> = quantize(x, s) = castToFp8( clip( x / s, −448, 448 ) )<br>x = dequantize(x<sub>q</sub>, s) = x<sub>q</sub> · s</div>
+  <ul class="where">
+    <li>x<sub>q</sub>: [-448, 448] 범위의 FP8E4M3 값 · s: 16/32비트 부동소수점 스칼라</li>
+    <li>castToFp8: FP8E4M3에서 표현 가능한 가장 가까운 값으로 반올림, 중간값은 짝수로</li>
+  </ul>
+
+  <h3>MXFP8</h3>
+  <p>동적 per-block 스킴. 출력 타입 FP8E4M3, 스케일 타입 E8M0, 블록 크기 32. 양자화·역양자화 수식은 FP8과 동일합니다. 활성화를 양자화할 때는 동적 양자화가 필수입니다.</p>
+
+  <h3>INT4</h3>
+  <div class="formula">x<sub>q</sub> = quantize(x, s) = roundWithTiesToEven( clip( x / s, −8, 7 ) )<br>x = dequantize(x<sub>q</sub>, s) = x<sub>q</sub> · s</div>
+  <ul class="where">
+    <li>x<sub>q</sub>: [-8, 7] 범위의 INT4 값 · s: 블록의 스케일(16/32비트 부동소수점)</li>
+    <li>per-block 스케일 필수. 지원 블록 크기 {64, 128}. 블록 축은 마지막 두 차원 중 하나</li>
+    <li>TensorRT는 INT4를 <strong>가중치 양자화에만</strong> 지원</li>
+  </ul>
+
+  <h3>NVFP4</h3>
+  <div class="formula">x<sub>q</sub> = quantize(x, s) = castToFp4( clip( x / s, −6, 6 ) )<br>x = dequantize(x<sub>q</sub>, s) = x<sub>q</sub> · s</div>
+  <ul class="where">
+    <li>x<sub>q</sub>: [-6, 6] 범위의 FP4 값 · s: 블록의 스케일(16/32비트 부동소수점)</li>
+    <li>per-block 스케일 필수. 유일한 블록 크기 16. 블록 축은 마지막 두 차원 중 하나</li>
+    <li>castToFp4: FP4E2M1에서 표현 가능한 가장 가까운 값으로, 중간값은 짝수로</li>
+    <li>활성화 양자화 시 동적 양자화 필수</li>
+  </ul>
+
+  <div class="tbl"><table>
+    <caption>원문 Table 11. Quantization Schemes and Precision</caption>
+    <thead><tr><th></th><th>INT8</th><th>FP8</th><th>MXFP8</th><th>INT4</th><th>NVFP4</th></tr></thead>
+    <tbody>
+      <tr><td>표현</td><td>8비트 2의 보수</td><td>S1E4M3</td><td>S1E4M3</td><td>4비트 2의 보수</td><td>S1E2M1</td></tr>
+      <tr><td>가중치 양자화</td><td>per-tensor / per-axis</td><td>per-tensor / per-axis</td><td>per-block (32)</td><td>per-block ({64, 128})</td><td>per-block</td></tr>
+      <tr><td>활성화 양자화</td><td>per-tensor</td><td>per-tensor</td><td>동적, per-block (32)</td><td class="n">없음</td><td>동적, per-block</td></tr>
+      <tr><td>Implicit 지원</td><td class="y">Yes</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td></tr>
+      <tr><td>Explicit 지원</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td></tr>
+      <tr><td>스케일 자료형</td><td>FP32, FP16, BF16</td><td>FP32, FP16, BF16</td><td>E8M0</td><td>FP32, FP16, BF16</td><td>FP32, FP16, BF16</td></tr>
+    </tbody>
+  </table></div>
+  <p class="small">NVFP4의 스케일 자료형은 Table 11에 FP32/FP16/BF16으로 적혀 있고, 6장의 이중 양자화 설명에서는 "FP8E4M3 스케일"이라고 적혀 있습니다. 둘은 각각 양자화 전 스케일과 양자화 후 스케일을 가리키는 것으로 읽히지만, 원문이 이를 명시하지는 않습니다.</p>
+</section>
+
+<section id="weights">
+  <h2><span class="num">8</span>Explicit 양자화: 양자화된 가중치 저장</h2>
+  <p>TensorRT가 네트워크에서 Q/DQ 레이어를 발견하면 Explicit 양자화 로직으로 엔진을 빌드합니다. Explicit 양자화는 Strong Typing과 Weak Typing 모두와 쓸 수 있고, <strong>정밀도 제어 빌드 플래그는 필요하지 않으며 지정하지 말아야</strong> 합니다. weak typing이 폐기되었으므로 항상 strong typing을 쓰라고 권고합니다.</p>
+  <p>Q/DQ 모델의 가중치는 고정밀(FP32/FP16/BF16) 또는 저정밀 양자화 타입(INT8/FP8/INT4/FP4)으로 줄 수 있습니다.</p>
+  <ul>
+    <li>고정밀 가중치: 엔진 빌드 시 가중치에 걸린 <code>IQuantizeLayer</code>의 스케일로 양자화되고, 양자화된 저정밀 가중치가 엔진 플랜 파일에 저장됩니다.</li>
+    <li>사전 양자화된 가중치: 가중치와 이를 쓰는 선형 연산 사이에 <code>IDequantizeLayer</code>가 필요합니다.</li>
+  </ul>
+  <h3>4비트 패킹</h3>
+  <p>INT4와 FP4 가중치는 한 바이트에 두 요소를 담습니다. <strong>첫 요소는 하위 4비트, 둘째 요소는 상위 4비트</strong>에 저장됩니다.</p>
+  <figure>
+    <svg viewBox="0 0 640 120" role="img" aria-label="4비트 요소 6개가 3바이트에 담긴다. 각 바이트의 하위 4비트에 첫 요소, 상위 4비트에 둘째 요소가 들어간다">
+      <text class="tx" x="10" y="20" font-weight="600">논리 텐서 (4비트 요소)</text>
+      <rect class="sq" x="10" y="30" width="40" height="28"/><text class="tm" x="30" y="49" text-anchor="middle">e0</text>
+      <rect class="sq" x="52" y="30" width="40" height="28"/><text class="tm" x="72" y="49" text-anchor="middle">e1</text>
+      <rect class="sq" x="94" y="30" width="40" height="28"/><text class="tm" x="114" y="49" text-anchor="middle">e2</text>
+      <rect class="sq" x="136" y="30" width="40" height="28"/><text class="tm" x="156" y="49" text-anchor="middle">e3</text>
+      <rect class="sq" x="178" y="30" width="40" height="28"/><text class="tm" x="198" y="49" text-anchor="middle">e4</text>
+      <rect class="sq" x="220" y="30" width="40" height="28"/><text class="tm" x="240" y="49" text-anchor="middle">e5</text>
+      <text class="tx" x="330" y="20" font-weight="600">물리 배치 (바이트)</text>
+      <!-- byte 0 -->
+      <rect class="sn" x="330" y="30" width="44" height="28"/><text class="tm" x="352" y="49" text-anchor="middle">e1</text>
+      <rect class="sn" x="374" y="30" width="44" height="28"/><text class="tm" x="396" y="49" text-anchor="middle">e0</text>
+      <text class="tm tmu" x="374" y="75" text-anchor="middle">byte 0</text>
+      <!-- byte 1 -->
+      <rect class="sn" x="430" y="30" width="44" height="28"/><text class="tm" x="452" y="49" text-anchor="middle">e3</text>
+      <rect class="sn" x="474" y="30" width="44" height="28"/><text class="tm" x="496" y="49" text-anchor="middle">e2</text>
+      <text class="tm tmu" x="474" y="75" text-anchor="middle">byte 1</text>
+      <!-- byte 2 -->
+      <rect class="sn" x="530" y="30" width="44" height="28"/><text class="tm" x="552" y="49" text-anchor="middle">e5</text>
+      <rect class="sn" x="574" y="30" width="44" height="28"/><text class="tm" x="596" y="49" text-anchor="middle">e4</text>
+      <text class="tm tmu" x="574" y="75" text-anchor="middle">byte 2</text>
+      <text class="tm tmu" x="352" y="100" text-anchor="middle">bit 7..4 (상위)</text>
+      <text class="tm tmu" x="396" y="112" text-anchor="middle">bit 3..0 (하위)</text>
+    </svg>
+    <figcaption>연속한 두 4비트 요소가 바이트 하나를 이룬다. 첫 요소가 하위 니블, 둘째 요소가 상위 니블. 원문은 (2, 3) 텐서를 패킹하는 예시 그림도 제공한다.</figcaption>
+  </figure>
+</section>
+
+<section id="onnx">
+  <h2><span class="num">9</span>ONNX 지원</h2>
+  <p>PyTorch나 TensorFlow에서 QAT로 학습한 모델을 ONNX로 내보내면 fake-quantization 연산 하나가 <code>QuantizeLinear</code> + <code>DequantizeLinear</code> 쌍으로 나옵니다. TensorRT는 이를 각각 <code>IQuantizeLayer</code>, <code>IDequantizeLayer</code>로 임포트합니다.</p>
+  <h3>ONNX opset 연표</h3>
+  <div class="kv">
+    <dt>opset 10</dt><dd>QuantizeLinear / DequantizeLinear 도입</dd>
+    <dt>opset 13</dt><dd>양자화 축(axis) 속성 추가. per-channel 양자화에 필요. PyTorch 1.8부터 opset 13 내보내기 지원</dd>
+    <dt>opset 19</dt><dd>FP8 형식 4종 추가. TensorRT는 그중 E4M3FN(<code>float8e4m3fn</code>)을 지원. 단, opset 19가 완전히 지원되는 것은 아님</dd>
+    <dt>opset 21</dt><dd>INT4 자료형과 블록 양자화 지원</dd>
+    <dt>opset 23</dt><dd>FP4E2M1 타입 지원</dd>
+  </div>
+  <p>원문 기준 최신 PyTorch(2.0)는 FP8 형식도, opset 19 내보내기도 지원하지 않습니다. 이 공백을 메우기 위해 TransformerEngine은 FP 양자화 함수를 "trt" 도메인의 커스텀 ONNX Q/DQ 연산자(TRT_FP8 QuantizeLinear / DequantizeLinear)로 내보냅니다. TensorRT는 이 커스텀 연산자와 표준 opset 19 Q/DQ를 모두 파싱하지만, ONNX Runtime 같은 다른 도구는 커스텀 연산자를 읽지 못합니다.</p>
+  <div class="callout warn"><span class="tag">원문 Warning · GEMM per-channel 축</span>
+    <p>ONNX GEMM은 per-channel 양자화가 가능한 연산자입니다. PyTorch <code>torch.nn.Linear</code>는 (K, C) 가중치 배치에 <code>transB</code> 속성이 켜진 GEMM으로 내보내지고(GEMM 전에 가중치를 전치), TensorFlow는 내보내기 전에 (C, K)로 미리 전치합니다.</p>
+    <ul>
+      <li>PyTorch: <var>y</var> = <var>x</var><var>W</var><sup>T</sup> → TensorRT가 가중치를 전치. 양자화는 전치 전에 수행되므로 per-channel 축은 <strong>차원 0 (K = 0)</strong></li>
+      <li>TensorFlow: <var>y</var> = <var>x</var><var>W</var> → per-channel 축은 <strong>차원 1 (K = 1)</strong></li>
+    </ul>
+  </div>
+  <h3>지원하지 않는 ONNX 양자화 연산자</h3>
+  <p>INT8/FP8 양자화 연산자를 직접 쓰는 사전 양자화 ONNX 모델은 지원하지 않습니다. 다음 연산자를 만나면 임포트 오류가 발생합니다.</p>
+  <ul>
+    <li><code>QLinearConv</code>, <code>QLinearMatmul</code></li>
+    <li><code>ConvInteger</code>, <code>MatmulInteger</code></li>
+  </ul>
+</section>
+
+<section id="processing">
+  <h2><span class="num">10</span>TensorRT의 Q/DQ 네트워크 처리</h2>
+  <p>Q/DQ 모드에서 최적화는 네트워크의 산술적 정확성을 바꾸지 않는 범위로 제한됩니다. 다만 비트 단위 동일성은 거의 불가능합니다. 부동소수점 연산 순서가 바뀌면 결과가 달라지는데, 예컨대 <var>a</var>·<var>s</var> + <var>b</var>·<var>s</var>를 (<var>a</var>+<var>b</var>)·<var>s</var>로 다시 쓰는 것은 유효한 최적화입니다. 이런 차이를 허용하는 것이 백엔드 최적화의 근본이고, Q/DQ 그래프를 양자화 연산으로 바꾸는 데도 그대로 적용됩니다.</p>
+  <h3>양자화 가능 레이어와 Q/DQ 융합</h3>
+  <p>Q/DQ 레이어는 네트워크의 연산 정밀도와 데이터 정밀도를 제어합니다. Q는 고정밀 텐서를 양자화 텐서로, DQ는 그 반대로 바꿉니다. TensorRT는 <strong>양자화 가능 레이어(quantizable layer)의 각 입력마다 Q/DQ 쌍</strong>이 있을 것을 기대합니다. 양자화 가능 레이어란 Q/DQ와 융합해 양자화 레이어로 바꿀 수 있는 딥러닝 레이어입니다. 융합이 일어나면 그 레이어는 양자화 데이터를 양자화 타입용 연산으로 처리하는 양자화 레이어로 대체됩니다.</p>
+  <figure>
+    <svg viewBox="0 0 700 150" role="img" aria-label="DQ, AveragePool, Q 세 레이어가 하나의 양자화된 AveragePool 레이어로 대체된다">
+      <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <text class="tx" x="10" y="20" font-weight="600">융합 전</text>
+      <line class="lq" x1="10" y1="60" x2="60" y2="60" marker-end="url(#ar)"/><text class="tm tq" x="12" y="50">int8</text>
+      <rect class="sh" x="62" y="42" width="52" height="36" rx="4"/><text class="tx" x="88" y="65" text-anchor="middle">DQ</text>
+      <line class="lh" x1="114" y1="60" x2="160" y2="60" marker-end="url(#ar)"/><text class="tm th2" x="118" y="50">fp</text>
+      <rect class="sh" x="162" y="42" width="92" height="36" rx="4"/><text class="tx" x="208" y="65" text-anchor="middle">AveragePool</text>
+      <line class="lh" x1="254" y1="60" x2="300" y2="60" marker-end="url(#ar)"/><text class="tm th2" x="258" y="50">fp</text>
+      <rect class="sh" x="302" y="42" width="44" height="36" rx="4"/><text class="tx" x="324" y="65" text-anchor="middle">Q</text>
+      <line class="lq" x1="346" y1="60" x2="396" y2="60" marker-end="url(#ar)"/><text class="tm tq" x="350" y="50">int8</text>
+      <rect class="fuse-box" x="56" y="34" width="296" height="52" rx="6"/>
+      <text class="tx tmu" x="204" y="112" text-anchor="middle">세 레이어가 하나로</text>
+      <!-- after -->
+      <text class="tx" x="440" y="20" font-weight="600">융합 후</text>
+      <line class="lq" x1="440" y1="60" x2="490" y2="60" marker-end="url(#ar)"/><text class="tm tq" x="442" y="50">int8</text>
+      <rect class="sq" x="492" y="42" width="140" height="36" rx="4"/><text class="tx" x="562" y="65" text-anchor="middle">AveragePool (int8)</text>
+      <line class="lq" x1="632" y1="60" x2="682" y2="60" marker-end="url(#ar)"/><text class="tm tq" x="636" y="50">int8</text>
+    </svg>
+    <figcaption>원문 첫 그림의 재구성. 양자화 가능한 AveragePool(파란색)이 입력 DQ와 출력 Q와 융합되어 양자화된 AveragePool(녹색) 하나로 바뀐다. 화살표는 활성화 텐서, 사각형은 레이어.</figcaption>
+  </figure>
+
+  <h3>Q/DQ 전파 (propagation)</h3>
+  <p>최적화 중 TensorRT는 Q/DQ 레이어를 이동시킵니다. 목표는 <strong>저정밀로 처리되는 그래프 비율을 최대화</strong>하는 것입니다. 이를 위해 <strong>Q는 뒤쪽(backward)으로</strong> 보내 양자화가 가능한 한 일찍 일어나게 하고, <strong>DQ는 앞쪽(forward)으로</strong> 보내 역양자화가 가능한 한 늦게 일어나게 합니다. Q는 양자화와 교환 가능한(commute) 레이어와, DQ는 역양자화와 교환 가능한 레이어와 자리를 바꿀 수 있습니다.</p>
+  <div class="formula"><span class="lbl">교환 가능(commute)의 정의</span>Q( Op(x) ) == Op( Q(x) ) 이면 Op는 양자화와 교환 가능<br>Op( DQ(x) ) == DQ( Op(x) ) 이면 Op는 역양자화와 교환 가능</div>
+  <figure>
+    <svg viewBox="0 0 700 180" role="img" aria-label="MaxPool 앞의 DQ는 MaxPool 뒤로 이동(forward), MaxPool 뒤의 Q는 MaxPool 앞으로 이동(backward)하여 MaxPool이 int8 텐서 위에서 동작하게 된다">
+      <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <text class="tx" x="10" y="20" font-weight="600">전파 전</text>
+      <line class="lq" x1="10" y1="52" x2="56" y2="52" marker-end="url(#ar2)"/>
+      <rect class="sh" x="58" y="34" width="48" height="36" rx="4"/><text class="tx" x="82" y="57" text-anchor="middle">DQ</text>
+      <line class="lh" x1="106" y1="52" x2="156" y2="52" marker-end="url(#ar2)"/><text class="tm th2" x="112" y="44">fp</text>
+      <rect class="sh" x="158" y="34" width="84" height="36" rx="4"/><text class="tx" x="200" y="57" text-anchor="middle">MaxPool</text>
+      <line class="lh" x1="242" y1="52" x2="292" y2="52" marker-end="url(#ar2)"/><text class="tm th2" x="248" y="44">fp</text>
+      <rect class="sh" x="294" y="34" width="44" height="36" rx="4"/><text class="tx" x="316" y="57" text-anchor="middle">Q</text>
+      <line class="lq" x1="338" y1="52" x2="384" y2="52" marker-end="url(#ar2)"/>
+      <!-- movement arrows -->
+      <path class="ln" d="M82 76 C 82 100, 200 100, 262 100" stroke-dasharray="4 3" marker-end="url(#ar2)"/>
+      <text class="tx tmu" x="130" y="118">DQ 앞으로(forward)</text>
+      <path class="ln" d="M316 76 C 316 130, 200 130, 140 130" stroke-dasharray="4 3" marker-end="url(#ar2)"/>
+      <text class="tx tmu" x="200" y="150">Q 뒤로(backward)</text>
+      <!-- after -->
+      <text class="tx" x="430" y="20" font-weight="600">전파 후</text>
+      <line class="lq" x1="430" y1="52" x2="476" y2="52" marker-end="url(#ar2)"/>
+      <rect class="sq" x="478" y="34" width="110" height="36" rx="4"/><text class="tx" x="533" y="57" text-anchor="middle">MaxPool (int8)</text>
+      <line class="lq" x1="588" y1="52" x2="640" y2="52" marker-end="url(#ar2)"/><text class="tm tq" x="594" y="44">int8</text>
+      <text class="tx tmu" x="430" y="100">MaxPool은 INT8 구현이 있고</text>
+      <text class="tx tmu" x="430" y="118">Q, DQ 모두와 교환 가능하므로</text>
+      <text class="tx tmu" x="430" y="136">이 재작성은 합법적이다.</text>
+    </svg>
+    <figcaption>원문 두 번째 그림의 재구성. DQ 전방 전파와 Q 후방 전파. MaxPool은 INT8 구현이 있고 Q/DQ와 교환 가능하므로 합법적인 재작성이다.</figcaption>
+  </figure>
+
+  <h3>왜 MaxPool은 교환 가능한가 (원문 증명 스케치)</h3>
+  <p>Max Pooling은 입력 계수 그룹에서 최댓값을 출력합니다. 그룹 i가 {x<sub>0</sub> … x<sub>m</sub>}일 때 output<sub>i</sub> = max({x<sub>0</sub>, x<sub>1</sub>, … x<sub>m</sub>}) 인데, 이는 max를 두 개씩 중첩 적용한 것과 같으므로 일반성을 잃지 않고 두 계수만 보면 됩니다.</p>
+  <div class="formula"><span class="lbl">x<sub>j</sub> ≥ x<sub>k</sub> 라고 하자. 양자화 함수 Q(a, scale, x<sub>max</sub>, x<sub>min</sub>) := truncate(round(a / scale), x<sub>max</sub>, x<sub>min</sub>), scale &gt; 0</span>
+    Q(x<sub>j</sub>, scale) ≥ Q(x<sub>k</sub>, scale)  (단조성, 원문은 증명 생략)<br>
+    ⇒ max({ Q(x<sub>j</sub>), Q(x<sub>k</sub>) }) = Q(x<sub>j</sub>)<br>
+    정의상 Q( max({x<sub>j</sub>, x<sub>k</sub>}) ) = Q(x<sub>j</sub>)<br>
+    ∴ max는 양자화와 교환 가능하고, Max Pooling도 그렇다.
+  </div>
+  <div class="formula"><span class="lbl">역양자화 DQ(a, scale) := a · scale, scale &gt; 0 에 대해서도 마찬가지로</span>max({ DQ(x<sub>j</sub>), DQ(x<sub>k</sub>) }) = DQ(x<sub>j</sub>) = DQ( max({x<sub>j</sub>, x<sub>k</sub>}) )</div>
+  <div class="callout note"><span class="tag">양자화 가능 레이어 vs 교환 가능 레이어</span>둘 다 INT8/FP8로 계산될 수 있지만 처리 방식이 다릅니다. 양자화 가능 레이어는 입력 DQ·출력 Q와 <strong>융합</strong>됩니다(AveragePool은 Q, DQ 어느 쪽과도 교환 가능하지 않으므로 이 경로). 교환 가능 레이어는 Q/DQ가 그 레이어를 <strong>통과</strong>해 지나갑니다(MaxPool).</div>
+</section>
+
+<section id="woq">
+  <h2><span class="num">11</span>Weight-Only 양자화 (WoQ)</h2>
+  <p>GEMM 성능이 메모리 대역폭에 묶여 있거나 GPU 메모리가 부족할 때 유용한 최적화입니다. GEMM <strong>가중치만 INT4</strong>로 양자화하고, 입력 데이터와 연산은 고정밀을 유지합니다. TensorRT의 WoQ 커널은 4비트 가중치를 메모리에서 읽어 역양자화한 뒤 고정밀로 내적을 수행합니다.</p>
+  <div class="flow">
+    <span class="chip q">INT4 weights (메모리)</span><span class="arr">→</span>
+    <span class="chip">dequantize</span><span class="arr fp">→ fp</span>
+    <span class="chip hp">GEMM (고정밀)</span>
+    <span class="arr fp">← fp</span><span class="chip hp">input (FP32/FP16/BF16)</span>
+  </div>
+  <p class="flow-cap">WoQ는 INT4 블록 양자화 + GEMM 레이어 조합에서만 가능합니다. 가중치는 평소처럼 Q/DQ로 양자화하고, 데이터 입력은 고정밀로 지정하면 TensorRT가 INT4 가중치 + 고정밀 GEMM 엔진을 만듭니다.</p>
+</section>
+
+<section id="placement">
+  <h2><span class="num">12</span>Q/DQ 배치 권고</h2>
+  <p>Q/DQ를 어디에 두느냐가 성능과 정확도를 결정합니다. 공격적으로 양자화하면 오차 때문에 정확도가 떨어지지만 지연시간은 줄어듭니다. 원문의 권고를 순서대로 정리합니다.</p>
+  <div class="callout warn"><span class="tag">빌드 오류 시</span>오래된 기기에는 모든 레이어의 저정밀 커널이 없을 수 있어 엔진 빌드 중 <code>could not find any implementation</code> 오류가 날 수 있습니다. 실패한 레이어를 양자화하는 Q/DQ 노드를 제거하면 해결됩니다.</div>
+
+  <h3>권고 1. 가중 연산의 모든 입력을 양자화</h3>
+  <p>Convolution, Transposed Convolution, GEMM의 입력(가중치와 활성화)을 양자화하면 대역폭 요구가 줄고 INT8 연산으로 대역폭 제한·연산 제한 레이어 모두 가속됩니다. 원문 그림은 입력만 양자화한 경우와 입력·출력 모두 양자화한 경우 두 가지 Conv 융합 예를 보여줍니다.</p>
+
+  <h3>권고 2. 가중 연산의 출력은 기본적으로 양자화하지 않음</h3>
+  <p>역양자화된 고정밀 출력을 유지하는 것이 유용한 경우가 있습니다. 예를 들어 선형 연산 뒤에 활성화 함수(원문 예시는 SiLU)가 오면, 수용 가능한 정확도를 내기 위해 고정밀 입력이 필요합니다.</p>
+
+  <h3>권고 3. BN·ReLU 융합을 학습 프레임워크에서 흉내 내지 말 것</h3>
+  <p>TensorRT 최적화가 이 연산들의 산술 의미론 보존을 보장합니다. Batch Normalization은 융합 전 네트워크의 실행 순서를 유지한 채 Convolution·ReLU와 융합되므로, 학습 네트워크에서 BN 폴딩을 시뮬레이션할 필요가 없습니다.</p>
+
+  <h3>권고 4. 스킵 연결의 잔차(residual) 입력을 양자화</h3>
+  <p>TensorRT는 가중 레이어 뒤의 element-wise 덧셈을 융합할 수 있어 ResNet, EfficientNet 같은 스킵 연결 모델에 유용합니다. 핵심 규칙은 <strong>element-wise 덧셈의 첫 입력 정밀도가 융합 출력의 정밀도를 결정</strong>한다는 것입니다.</p>
+  <figure>
+    <svg viewBox="0 0 720 210" role="img" aria-label="잔차 입력이 부동소수점이면 Conv와 덧셈의 융합 출력도 부동소수점이라 뒤의 Q를 융합할 수 없고, 잔차 입력이 INT8이면 융합 출력도 INT8이라 뒤의 Q까지 융합된다">
+      <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <!-- left: x1 float -->
+      <text class="tx" x="10" y="18" font-weight="600">A. 잔차 x¹ 가 부동소수점</text>
+      <rect class="sh" x="10" y="40" width="40" height="30" rx="4"/><text class="tx" x="30" y="60" text-anchor="middle">DQ</text>
+      <line class="lh" x1="50" y1="55" x2="84" y2="55" marker-end="url(#ar3)"/>
+      <rect class="sh" x="86" y="40" width="56" height="30" rx="4"/><text class="tx" x="114" y="60" text-anchor="middle">Conv</text>
+      <line class="lh" x1="142" y1="55" x2="176" y2="55" marker-end="url(#ar3)"/>
+      <circle class="sh" cx="192" cy="55" r="14"/><text class="tx" x="192" y="60" text-anchor="middle">+</text>
+      <line class="lh" x1="206" y1="55" x2="240" y2="55" marker-end="url(#ar3)"/><text class="tm th2" x="210" y="47">fp</text>
+      <rect class="sn" x="242" y="40" width="40" height="30" rx="4"/><text class="tx" x="262" y="60" text-anchor="middle">Q</text>
+      <line class="lq" x1="282" y1="55" x2="316" y2="55" marker-end="url(#ar3)"/>
+      <!-- residual input -->
+      <line class="lh" x1="192" y1="110" x2="192" y2="71" marker-end="url(#ar3)"/>
+      <text class="tm th2" x="200" y="100">x¹ (fp)</text>
+      <rect class="fuse-box" x="4" y="32" width="208" height="46" rx="6"/>
+      <text class="tx tmu" x="10" y="140">융합 출력이 fp로 제한되어</text>
+      <text class="tx tmu" x="10" y="158">뒤의 Q는 Conv에 융합되지 못함</text>
+      <!-- right: x1 int8 -->
+      <text class="tx" x="380" y="18" font-weight="600">B. 잔차 x¹ 를 INT8로 양자화</text>
+      <rect class="sh" x="380" y="40" width="40" height="30" rx="4"/><text class="tx" x="400" y="60" text-anchor="middle">DQ</text>
+      <line class="lh" x1="420" y1="55" x2="454" y2="55" marker-end="url(#ar3)"/>
+      <rect class="sh" x="456" y="40" width="56" height="30" rx="4"/><text class="tx" x="484" y="60" text-anchor="middle">Conv</text>
+      <line class="lh" x1="512" y1="55" x2="546" y2="55" marker-end="url(#ar3)"/>
+      <circle class="sh" cx="562" cy="55" r="14"/><text class="tx" x="562" y="60" text-anchor="middle">+</text>
+      <line class="lh" x1="576" y1="55" x2="610" y2="55" marker-end="url(#ar3)"/>
+      <rect class="sh" x="612" y="40" width="40" height="30" rx="4"/><text class="tx" x="632" y="60" text-anchor="middle">Q</text>
+      <line class="lq" x1="652" y1="55" x2="700" y2="55" marker-end="url(#ar3)"/><text class="tm tq" x="658" y="47">int8</text>
+      <!-- residual int8 path -->
+      <rect class="sq" x="540" y="118" width="44" height="26" rx="4"/><text class="tx" x="562" y="136" text-anchor="middle">DQ</text>
+      <line class="lh" x1="562" y1="118" x2="562" y2="71" marker-end="url(#ar3)"/>
+      <line class="lq" x1="562" y1="175" x2="562" y2="146" marker-end="url(#ar3)"/>
+      <text class="tm tq" x="572" y="170">x¹ (int8)</text>
+      <rect class="fuse-box" x="374" y="32" width="286" height="46" rx="6"/>
+      <text class="tx tmu" x="380" y="200">융합 출력이 INT8이라 뒤의 Q까지 Conv에 융합됨</text>
+    </svg>
+    <figcaption>원문 네 번째·다섯 번째 그림의 재구성. 점선 상자가 융합 범위. 잔차 입력이 INT8이면 Conv + Add + Q가 한 번에 융합된다.</figcaption>
+  </figure>
+
+  <h3>권고 5. 추가 성능이 필요하면 교환 불가능한 레이어도 양자화 시도</h3>
+  <p>현재 <strong>가중치 없는(non-weighted) 레이어는 입력이 INT8이면 출력도 INT8이어야</strong> 하므로, 입력과 출력을 모두 양자화해야 합니다. 원문 그림은 element-wise 덧셈이 입력 DQ들과 출력 Q와 융합되는 예입니다.</p>
+
+  <h3>권고 6. Q/DQ 추가는 보수적으로</h3>
+  <p>주변 Q/DQ와 융합할 수 없으면 성능이 떨어질 수 있습니다. 정확도와 TensorRT 성능을 함께 보며 실험하십시오. 원문 그림은 Q/DQ 쌍이 추가로 끼어들어 Convolution이 element-wise 덧셈과 따로 융합되는 비최적(suboptimal) 융합 사례를 보여줍니다.</p>
+  <div class="flow">
+    <span class="chip hp">Conv</span><span class="arr fp">→</span><span class="chip">Q</span><span class="arr i8">→</span><span class="chip">DQ</span><span class="arr fp">→</span><span class="chip hp">Add</span><span class="arr fp">→</span><span class="chip">Q</span>
+    <span class="arr">&nbsp;&nbsp;비최적: Conv와 Add 사이의 Q/DQ 쌍이 둘을 갈라놓음</span>
+  </div>
+  <div class="flow">
+    <span class="fuse"><span class="chip hp">Conv</span><span class="arr fp">→</span><span class="chip hp">Add</span><span class="arr fp">→</span><span class="chip">Q</span></span>
+    <span class="arr">&nbsp;&nbsp;최적: 하나로 융합</span>
+  </div>
+
+  <h3>권고 7. 활성화는 per-tensor, 가중치는 per-channel</h3>
+  <p>이 조합이 경험적으로 가장 좋은 양자화 정확도를 냅니다. 추가로 FP16을 켜면 엔진 지연시간을 더 줄일 수 있습니다. TensorRT는 가능할 때마다 FP32 대신 FP16을 쓰려고 시도합니다(모든 레이어 타입에서 지원되는 것은 아님).</p>
+</section>
+
+<section id="limits">
+  <h2><span class="num">13</span>Q/DQ 제약과 플러그인</h2>
+  <h3>Refit 시 스케일 동등성 제약</h3>
+  <p>TensorRT의 일부 Q/DQ 그래프 재작성 최적화는 둘 이상의 Q/DQ 레이어 스케일 값을 비교해 <strong>같을 때만</strong> 재작성을 수행합니다. refit 가능한 엔진을 refit하면 Q/DQ 노드의 스케일에 새 값을 넣을 수 있는데, 스케일 의존 최적화에 참여한 Q/DQ에 재작성을 깨는 새 값이 들어오면 TensorRT는 예외를 던지고 refit을 중단합니다. 원문 그림: Q1과 Q2의 스케일이 같으면 후방 전파를 허용하는데, refit으로 Q1 ≠ Q2가 되면 예외.</p>
+
+  <h3>플러그인과 Q/DQ</h3>
+  <p>플러그인은 레이어 그룹을 커스텀 구현으로 대체합니다. 플러그인이 양자화 입력(INT8/FP8)을 받아 양자화 출력을 낼 때는 <strong>입력 DQ와 출력 Q를 플러그인 안으로 넣고 네트워크에서는 제거</strong>해야 합니다.</p>
+  <p>원문 예: 두 Conv 사이에 INT8 플러그인 <code>MyInt8Plugin</code>이 끼어 있는 순차 그래프(가중치 양자화는 무시). 파란 화살표는 FP32, 녹색 화살표는 INT8 텐서입니다. 대괄호는 TensorRT 융합.</p>
+  <div class="flow">
+    <span class="chip">Input</span><span class="arr fp">&gt;</span><span class="chip">Q</span><span class="arr i8">→</span><span class="chip">DQ</span><span class="arr fp">&gt;</span><span class="chip hp">Conv</span><span class="arr fp">&gt;</span><span class="chip">Q</span><span class="arr i8">→</span><span class="chip">DQ_i</span><span class="arr fp">&gt;</span><span class="chip pl">MyInt8Plugin</span><span class="arr fp">&gt;</span><span class="chip">Q_o</span><span class="arr i8">→</span><span class="chip">DQ</span><span class="arr fp">&gt;</span><span class="chip hp">Conv</span><span class="arr fp">&gt;</span><span class="chip">Output</span>
+  </div>
+  <p class="flow-cap">① 원래 그래프. 그대로 최적화하면 아래처럼 융합되고, 플러그인은 FP32 입출력을 받습니다.</p>
+  <div class="flow">
+    <span class="chip">Input</span><span class="arr fp">&gt;</span><span class="chip">Q</span><span class="arr i8">→</span><span class="fuse"><span class="chip">DQ</span><span class="arr i8">→</span><span class="chip q">Conv</span><span class="arr i8">→</span><span class="chip">Q</span></span><span class="arr i8">→</span><span class="chip">DQ_i</span><span class="arr fp">&gt;</span><span class="chip pl">MyInt8Plugin</span><span class="arr fp">&gt;</span><span class="chip">Q_o</span><span class="arr i8">→</span><span class="fuse"><span class="chip">DQ</span><span class="arr i8">→</span><span class="chip q">Conv</span></span><span class="arr fp">&gt;</span><span class="chip">Output</span>
+  </div>
+  <p class="flow-cap">② 자동 융합 결과. 플러그인이 INT8을 쓰려면 DQ_i와 Q_o를 플러그인에 수동 통합하고, 그 플러그인 레이어에 <code>setOutputType(kINT8)</code>을 호출해야 합니다. 그러면 TensorRT는 네트워크를 다음과 같이 해석합니다.</p>
+  <div class="flow">
+    <span class="chip">Input</span><span class="arr fp">&gt;</span><span class="chip">Q</span><span class="arr i8">→</span><span class="chip">DQ</span><span class="arr fp">&gt;</span><span class="chip hp">Conv</span><span class="arr fp">&gt;</span><span class="chip">Q</span><span class="arr i8">→</span><span class="chip pl q">MyInt8Plugin</span><span class="arr i8">→</span><span class="chip">DQ</span><span class="arr fp">&gt;</span><span class="chip hp">Conv</span><span class="arr fp">&gt;</span><span class="chip">Output</span>
+  </div>
+  <p class="flow-cap">③ DQ_i·Q_o가 플러그인 안으로 들어간 그래프. 최종 융합은 아래.</p>
+  <div class="flow">
+    <span class="chip">Input</span><span class="arr fp">&gt;</span><span class="chip">Q</span><span class="arr i8">→</span><span class="fuse"><span class="chip">DQ</span><span class="arr i8">→</span><span class="chip q">Conv</span><span class="arr i8">→</span><span class="chip">Q</span></span><span class="arr i8">→</span><span class="chip pl q">MyInt8Plugin</span><span class="arr i8">→</span><span class="fuse"><span class="chip">DQ</span><span class="arr i8">→</span><span class="chip q">Conv</span></span><span class="arr fp">&gt;</span><span class="chip">Output</span>
+  </div>
+  <p class="flow-cap">④ 플러그인 앞뒤가 모두 INT8 텐서가 됨. DQ_i를 "수동 융합"할 때는 입력 양자화 스케일을 플러그인에 넘겨 (필요하면) 입력을 역양자화할 수 있게 하고, Q_o의 스케일로 플러그인 출력을 양자화합니다.</p>
+</section>
+
+<section id="qat">
+  <h2><span class="num">14</span>QAT 프레임워크 메모</h2>
+  <dl class="kv">
+    <dt>TensorFlow</dt><dd>TensorRT Model Optimizer로 TensorFlow 2 Keras 모델에 NVIDIA QAT 레시피를 적용할 수 있습니다. TensorFlow 1은 per-channel 양자화(PCQ)를 지원하지 않는데, PCQ는 가중치 정확도 보존을 위해 권장되는 방식입니다.</dd>
+    <dt>PyTorch</dt><dd>PyTorch 1.8.0 이상은 ONNX QuantizeLinear/DequantizeLinear의 per-channel 스케일을 지원합니다. Model Optimizer로 INT8 캘리브레이션, QAT·PTQ(TensorRT가 지원하는 여러 정밀도), ONNX 내보내기를 할 수 있습니다.</dd>
+  </dl>
+</section>
+
+<section id="implicit">
+  <h2><span class="num">15</span>Implicit 양자화 (폐기)</h2>
+  <div class="callout warn"><span class="tag">원문 Note</span>이 장은 Implicit 양자화에서만 쓸 수 있는 기능을 다루며 INT8에 한정됩니다. Implicit 양자화와 아래 API들은 폐기되었고 사용이 권장되지 않습니다. Explicit 양자화를 쓰십시오.</div>
+
+  <h3>동적 범위 직접 설정 (Dynamic Range API)</h3>
+  <p>TensorRT 바깥에서 계산한 값으로 텐서의 동적 범위(양자화 텐서가 표현해야 하는 범위)를 직접 지정하는 API입니다. INT8에만 적용됩니다. 최소·최대값을 주면 TensorRT는 대칭 범위만 지원하므로 스케일을 <code>max(abs(min_float), abs(max_float))</code>로 계산합니다. 따라서 <code>abs(min_float) != abs(max_float)</code>이면 설정한 것보다 넓은 범위가 쓰여 반올림 오차가 커질 수 있습니다.</p>
+<pre><code>// C++
+tensor-&gt;setDynamicRange(min_float, max_float);
+
+# Python
+tensor.dynamic_range = (min_float, max_float)</code></pre>
+  <p class="small">C++ 사용 예는 sampleINT8API 샘플에 있습니다.</p>
+
+  <h3>캘리브레이션을 이용한 PTQ</h3>
+  <p>TensorRT가 네트워크의 각 텐서에 대해 스케일을 계산하는 과정이 캘리브레이션입니다. 대표 입력 데이터를 주면 네트워크를 실행하며 활성화 텐서별 통계를 수집합니다. 필요한 데이터 양은 응용에 따라 다르지만, ImageNet 분류 네트워크는 약 500장이면 충분하다는 실험 결과가 있습니다.</p>
+  <p>통계가 있어도 최적 스케일을 정하는 것은 정밀과학이 아닙니다. 두 오차의 균형이 필요합니다.</p>
+  <ul>
+    <li><strong>이산화 오차(discretization error)</strong>: 양자화 값 하나가 담당하는 범위가 넓어질수록 증가</li>
+    <li><strong>절단 오차(truncation error)</strong>: 표현 범위 한계로 값이 잘릴 때 발생</li>
+  </ul>
+  <p>그래서 TensorRT는 스케일을 다르게 계산하는 여러 캘리브레이터를 제공합니다. 오래된 캘리브레이터는 캘리브레이션 전에 GPU용 레이어 융합을 수행해 불필요한 텐서를 제거했는데, DLA는 융합 패턴이 달라 문제가 될 수 있으며 <code>kCALIBRATE_BEFORE_FUSION</code> 양자화 플래그로 덮어쓸 수 있습니다.</p>
+
+  <div class="callout note"><span class="tag">배치 크기와 히스토그램</span>
+    <p><code>IInt8EntropyCalibrator2</code>와 <code>IInt8EntropyCalibrator</code>는 배치 크기가 절단 오차에 영향을 줍니다. 각 캘리브레이션 스텝마다 활성화 텐서별 히스토그램을 갱신하는데, 현재 최댓값보다 큰 값이 나오면 히스토그램 범위를 2의 거듭제곱 단위로 늘립니다. 마지막 스텝에서 재할당이 일어나면 빈(bin)의 절반이 비어 있는 히스토그램이 되어 스케일이 나빠집니다. 배치 순서에도 민감해져 순서가 다르면 스케일이 조금씩 달라집니다.</p>
+    <p>대책: 가능한 한 <strong>큰 단일 배치</strong>로 캘리브레이션하고, 배치를 잘 섞어 분포가 비슷하게 유지하십시오.</p>
+  </div>
+
+  <h3>캘리브레이터 4종</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>캘리브레이터</th><th>스케일 결정 방식</th><th>융합 시점(기본)</th><th>권장 대상</th></tr></thead>
+    <tbody>
+      <tr><td><code>IInt8EntropyCalibrator2</code></td><td>양자화 텐서의 정보이론적 내용을 최적화. 보통 분포의 이상치를 억제. 현재 권장되는 엔트로피 캘리브레이터이며 DLA에는 필수</td><td>융합 전</td><td>CNN 계열. 배치 크기가 결과에 영향</td></tr>
+      <tr><td><code>IInt8MinMaxCalibrator</code></td><td>활성화 분포의 전체 범위를 사용</td><td>융합 전</td><td>NLP. NVIDIA BERT 등</td></tr>
+      <tr><td><code>IInt8EntropyCalibrator</code></td><td>원래의 엔트로피 캘리브레이터. Legacy보다 단순하고 보통 결과가 더 좋음</td><td>융합 후</td><td>배치 크기가 결과에 영향</td></tr>
+      <tr><td><code>IInt8LegacyCalibrator</code></td><td>TensorRT 2.0 EA 호환용. 사용자 파라미터 필요. 다른 캘리브레이터 결과가 나쁠 때의 대안. 백분위 max 구현 가능 (예: 99.99% 백분위가 NVIDIA BERT, NeMo ASR QuartzNet에서 최고 정확도)</td><td>융합 후</td><td>마지막 수단</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>INT8 엔진 빌드 3단계와 캐시</h3>
+  <ol class="steps">
+    <li>32비트 엔진을 빌드해 캘리브레이션 세트로 실행하고, 텐서별 활성화 값 분포 히스토그램을 기록</li>
+    <li>히스토그램으로부터 텐서별 스케일을 담은 <strong>캘리브레이션 테이블</strong>을 생성</li>
+    <li>캘리브레이션 테이블과 네트워크 정의로 INT8 엔진 빌드</li>
+  </ol>
+  <p>캘리브레이션은 느릴 수 있으므로 2단계 결과(테이블)를 캐시해 재사용할 수 있습니다. 모든 캘리브레이터가 지원합니다. 캘리브레이션 전에 TensorRT는 캘리브레이터에 캐시된 테이블이 있는지 묻고, 있으면 3단계로 바로 갑니다. 캐시 데이터는 포인터와 길이로 전달됩니다.</p>
+  <ul>
+    <li><strong>기기 간 이식성</strong>: 캘리브레이션이 레이어 융합 전에 일어나면 캐시는 다른 기기에서도 쓸 수 있습니다. 즉 <code>IInt8EntropyCalibrator2</code>, <code>IInt8MinMaxCalibrator</code>, 또는 <code>QuantizationFlag::kCALIBRATE_BEFORE_FUSION</code> 설정 시. 예: 데스크톱 GPU에서 테이블을 만들어 임베디드 플랫폼에서 재사용. 융합은 플랫폼·기기 간에 동일함이 보장되지 않으므로 융합 후 캘리브레이션은 이식 불가.</li>
+    <li><strong>TensorRT 릴리스 간</strong>에는 일반적으로 이식되지 않습니다.</li>
+  </ul>
+  <p>TensorRT는 가중치 텐서의 최대 절댓값으로 스케일을 계산하는 대칭 양자화를 쓰고, convolution·deconvolution·fully connected 가중치는 per-channel 스케일입니다.</p>
+  <div class="callout note"><span class="tag">원문 Note · INT8 I/O</span>빌더가 INT8 I/O를 쓰도록 설정되어도 캘리브레이션 데이터는 FP32여야 합니다. INT8 I/O를 FP32로 캐스팅해 만들 수 있으며, 이 데이터는 [-128.0, 127.0] 범위에 있어야 하고 정밀도 손실 없이 INT8로 변환되어야 합니다.</div>
+  <p>INT8 캘리브레이션은 동적 범위 API와 함께 쓸 수 있습니다. 수동으로 설정한 동적 범위가 캘리브레이션 결과를 덮어씁니다.</p>
+  <div class="callout note"><span class="tag">원문 Note · 결정성</span>같은 기기에서 같은 입력을 같은 순서로 주면 생성되는 스케일은 실행마다 동일합니다. 같은 기기·같은 배치 크기·같은 입력이면 캐시 데이터도 비트 단위로 동일합니다. 기기, 배치 크기, 입력이 다르면 비트 단위 동일성은 보장되지 않습니다.</div>
+
+  <h3>C++로 캘리브레이션</h3>
+  <p><code>IInt8Calibrator</code> 인터페이스를 구현해 캘리브레이션 데이터를 제공합니다.</p>
+  <ol class="steps">
+    <li>입력 배치 크기를 정하고, 빌더가 <code>getBatchSize()</code>로 기대 배치 크기를 조회할 수 있게 합니다.</li>
+    <li><code>getBatch()</code>를 반복 호출해 배치를 공급합니다. 각 배치는 <code>getBatchSize()</code>와 정확히 같아야 하고, 데이터가 끝나면 <code>false</code>를 반환합니다.</li>
+    <li>빌더 설정에 연결: <code>config-&gt;setInt8Calibrator(calibrator.get());</code></li>
+    <li>캐시 메서드 구현: <code>writeCalibrationCache()</code>(저장), <code>readCalibrationCache()</code>(있으면 읽기).</li>
+  </ol>
+
+  <h3>Python으로 캘리브레이션</h3>
+<pre><code>import tensorrt as trt
+
+# 검증셋처럼 전체 추론 데이터를 대표하는 파일들로 batchstream을 만든다
+NUM_IMAGES_PER_BATCH = 5
+batchstream = ImageBatchStream(NUM_IMAGES_PER_BATCH, calibration_files)
+
+# 입력 노드 이름과 batchstream으로 캘리브레이터 생성
+Int8_calibrator = EntropyCalibrator(["input_node_name"], batchstream)
+
+# INT8 모드와 캘리브레이터 설정
+config.set_flag(trt.BuilderFlag.INT8)
+config.int8_calibrator = Int8_calibrator</code></pre>
+
+  <h3>양자화 노이즈 감소 휴리스틱</h3>
+  <p>Implicit 양자화 네트워크에서 TensorRT는 출력 근처 일부 레이어를 INT8 구현이 있어도 FP32로 강제해 출력의 양자화 노이즈를 줄이려 합니다. 여러 양자화 값을 합산하는 "평활(smoothing) 레이어"(convolution, deconvolution, fully connected, matrix multiplication)가 출력 전에 있을 때 적용됩니다. 예: (convolution + activation + shuffle) 서브그래프가 반복되고 출력 타입이 FP32이면, INT8이 허용되고 더 빨라도 마지막 convolution은 FP32를 출력합니다.</p>
+  <p>다음 경우에는 적용되지 않습니다.</p>
+  <ul>
+    <li>네트워크 출력 타입이 INT8</li>
+    <li>마지막 평활 레이어에서 출력까지의 경로(양 끝 포함)에 <code>ILayer::setOutputType</code> 또는 <code>ILayer::setPrecision</code>으로 INT8 출력이 강제된 연산이 있음</li>
+    <li>출력으로 가는 경로에 평활 레이어가 없거나, 그 경로에 플러그인 레이어가 끼어 있음</li>
+    <li>네트워크가 Explicit 양자화를 사용</li>
+  </ul>
+</section>
+
+<section id="notes">
+  <h2>부록. 프로젝트 적용 메모</h2>
+  <div class="callout mine"><span class="tag">원문 외 · 정리자의 추론</span>
+    <p>아래는 이 문서를 현재 파이프라인(FP32 학습 → ONNX → Model Optimizer INT8 PTQ → TensorRT 엔진)에 대응시킨 메모입니다. 원문 내용이 아니며, 엔진 로그와 ONNX 그래프로 확인이 필요합니다.</p>
+    <ul>
+      <li><strong>해당 모드는 Explicit.</strong> Model Optimizer가 Q/DQ를 ONNX에 넣으므로 15장(캘리브레이터, 동적 범위 API, 노이즈 감소 휴리스틱)은 적용되지 않습니다. 3장의 경고대로 TensorRT 빌드 시 캘리브레이션 테이블을 따로 주면 안 됩니다. 스케일 결정은 ModelOpt 단계에서 끝납니다.</li>
+      <li><strong>granularity 확인.</strong> 권고 7은 활성화 per-tensor, 가중치 per-channel입니다. ONNX의 가중치 쪽 <code>DequantizeLinear</code> 스케일 모양(스칼라인지 길이 K 벡터인지)과 <code>axis</code> 속성으로 ModelOpt가 실제로 어떻게 내보냈는지 확인할 수 있습니다. 9장 경고대로 PyTorch 출신 GEMM은 axis 0이어야 합니다.</li>
+      <li><strong>Conv 출력 → GELU 경로.</strong> 권고 2(가중 연산 출력은 양자화하지 않음, 활성화 함수 앞은 고정밀)는 현재 엔진에서 Conv/MatMul은 INT8, LN/GELU는 FP16으로 남는 패턴과 일치합니다. 의도된 배치로 보입니다.</li>
+      <li><strong>ConvNeXt 잔차 덧셈.</strong> 권고 4에 따라 스킵 입력에 Q/DQ가 없으면 Conv + Add 융합 출력이 FP로 제한되어 뒤의 Q가 Conv에 융합되지 못합니다. 엔진 레이어 정보에서 Add 주변 융합 여부를 보면 추가 Q/DQ 삽입 실험의 근거가 됩니다. 단, 권고 6의 비최적 융합 위험도 함께 봐야 합니다.</li>
+      <li><strong>빌드 플래그.</strong> 8장: Explicit 모델에는 정밀도 제어 빌드 플래그가 필요 없고 지정하지 말라고 되어 있으며 strong typing을 권장합니다. 현재 빌드 스크립트의 플래그 설정과 대조해 볼 가치가 있습니다.</li>
+      <li><strong>문서 버전.</strong> 이 원문은 TensorRT 10.x 문서이고 아카이브 상태입니다. 현재 사용 중인 TensorRT 11.x와 세부 동작(지원 opset, 융합 패턴, 플래그)이 다를 수 있으므로 결정에 쓰기 전에 현행 문서로 재확인이 필요합니다.</li>
+    </ul>
+  </div>
+</section>
+
+</main>
+</div>
+</div>

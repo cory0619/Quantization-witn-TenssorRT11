@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ConvNeXt 백본 활용 분석</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1f2328; --muted: #57606a; --line: #d0d7de; --panel: #f6f8fa;
+    --accent: #0969da; --ok: #1a7f37; --warn: #9a6700; --code: #f3f4f6; --box: #eef3ff; --box2: #fff4e5; --box3: #e8f5ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1117; --fg: #e6edf3; --muted: #9da7b3; --line: #30363d; --panel: #161b22;
+      --accent: #58a6ff; --ok: #3fb950; --warn: #d29922; --code: #1c2129; --box: #182238; --box2: #2d2412; --box3: #122718;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1117; --fg: #e6edf3; --muted: #9da7b3; --line: #30363d; --panel: #161b22;
+    --accent: #58a6ff; --ok: #3fb950; --warn: #d29922; --code: #1c2129; --box: #182238; --box2: #2d2412; --box3: #122718;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.65 "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 1.7em; margin: 0 0 4px; }
+  h2 { font-size: 1.3em; margin: 40px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.08em; margin: 24px 0 8px; }
+  p { margin: 8px 0; }
+  .sub { color: var(--muted); margin-bottom: 18px; }
+  .summary { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 18px; }
+  .summary li { margin: 4px 0; }
+  code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 0.92em; background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; overflow-x: auto; font-size: 0.86em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0 16px; font-size: 0.93em; }
+  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--panel); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .src { color: var(--muted); font-size: 0.85em; }
+  .tag { display: inline-block; font-size: 0.78em; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--line); margin-left: 6px; vertical-align: middle; }
+  .tag.ok { color: var(--ok); border-color: var(--ok); }
+  .tag.inf { color: var(--warn); border-color: var(--warn); }
+  .flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin: 12px 0; }
+  .node { flex: 1 1 150px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 0.86em; }
+  .node b { display: block; font-size: 1.02em; margin-bottom: 2px; }
+  .node.enc { background: var(--box); }
+  .node.dec { background: var(--box2); }
+  .node.head { background: var(--box3); }
+  .legend span { display: inline-block; width: 14px; height: 14px; border: 1px solid var(--line); border-radius: 3px; vertical-align: -2px; margin-right: 4px; }
+  .note { border-left: 3px solid var(--accent); padding: 4px 12px; margin: 10px 0; background: var(--panel); }
+  @media (max-width: 600px) { table { font-size: 0.82em; } th, td { padding: 4px 6px; } }
+</style>
+</head>
+<body>
+<main>
+<h1>참조 코드의 ConvNeXt 활용 분석</h1>
+<p class="sub">대상: <code>E:\forgeAI_practice\ForgeAIServer_v1.0.1\train_test_forgeai.py</code> (+ <code>pretrained_weights.py</code>) ·
+환경: segmentation_models_pytorch 0.5.0, timm 1.0.24 · 작성 2026-10-17.
+아래 수치는 모두 py310 환경에서 참조 코드의 <code>build_model()</code>을 그대로 만들어 실제로 잰 값이다
+(<span class="tag ok">검증</span> 표시). 코드에 없는 설계 의도 해석은 <span class="tag inf">추정</span>으로 표시했다.</p>
+
+<div class="summary">
+<b>한 줄 결론</b>
+<ul>
+  <li>ConvNeXt-Base 는 <b>DeepLabV3+ 의 encoder(특징 추출기)로만</b> 쓰인다. smp 의 <code>DeepLabV3Plus(encoder_name="tu-convnext_base")</code> 가 timm 의 <code>convnext_base</code> 를 <code>features_only=True</code> 로 만들어 다단계 특징맵만 받는다.</li>
+  <li>ConvNeXt 의 ImageNet 분류 head(<code>head.norm</code>, <code>head.fc</code>) 는 버리고, 나머지 <b>340 개 텐서 전부</b>를 사전학습 파일에서 로드한다. 동결(freeze) 없이 encoder 전체를 디코더와 같은 학습률(Adam 5e-4)로 미세조정한다.</li>
+  <li>디코더(ASPP + low-level 융합)와 세그멘테이션 헤드는 ConvNeXt 가 아니라 smp 의 DeepLabV3+ 구성요소다. ConvNeXt 가 내놓는 4 개 특징맵 중 실제로 디코더가 쓰는 것은 <b>2 개</b>(1/4 특징, 마지막 특징)다.</li>
+  <li>encoder 는 <code>output_stride=16</code> 으로 만들어져 마지막 stage 가 stride 대신 dilation 2 를 쓴다. 그래서 마지막 특징맵이 1/32 이 아니라 1/16 해상도다.</li>
+  <li>새 모델(<code>unet_model_convnext.py</code>, R6)은 이 중 <b>백본만</b> 가져오고(같은 timm 모델, 같은 사전학습 파일, 같은 key 변환), ASPP 대신 R5 식 덧셈 skip 디코더와 full-res 가지를 붙였다.</li>
+</ul>
+</div>
+
+<h2>1. 참조 코드에서 ConvNeXt 가 등장하는 곳</h2>
+<table>
+<tr><th style="width:26%">위치</th><th>내용</th><th style="width:30%">ConvNeXt 와의 관계</th></tr>
+<tr><td><code>ENCODER_NAME = "tu-convnext_base"</code><br><span class="src">train_test_forgeai.py:261</span></td>
+    <td>smp 인코더 이름. <code>tu-</code> 접두어는 "timm universal" 로, 뒤의 이름을 <code>timm.create_model()</code> 에 그대로 넘긴다.</td>
+    <td>백본 선택</td></tr>
+<tr><td><code>build_model()</code><br><span class="src">:265-271</span></td>
+    <td><pre><code>smp.DeepLabV3Plus(
+    encoder_name=ENCODER_NAME,
+    encoder_weights=None,   # smp 가 주는 imagenet 가중치는 안 씀
+    in_channels=1,          # grayscale
+    classes=NUM_CLASSES,
+)</code></pre></td>
+    <td>encoder 자리에만 들어감. 디코더/헤드는 smp 기본값(DeepLabV3+)</td></tr>
+<tr><td><code>load_pretrained_encoder()</code><br><span class="src">:329-363</span></td>
+    <td>HF <code>timm/convnext_base.fb_in22k_ft_in1k</code> 의 <code>model.safetensors</code> 를 직접 읽어 <code>model.encoder</code> 에만 로드. key 변환
+        <code>"stages.0." → "model.stages_0."</code>, <code>head.*</code> 는 건너뜀, stem conv 는 RGB 3채널 가중치를 합산해 1채널로.</td>
+    <td>사전학습 가중치 주입 (encoder 한정)</td></tr>
+<tr><td><code>ensure_pretrained_encoder()</code><br><span class="src">pretrained_weights.py</span></td>
+    <td>위 파일이 없으면 HuggingFace 에서 내려받음 (338 MB, safetensors 파싱으로 검증). 현재 PC 에는 이미 있음.</td>
+    <td>가중치 파일 준비</td></tr>
+<tr><td><code>_aspp_pooling_batchnorms()</code>, <code>set_train_mode()</code><br><span class="src">:275-308</span></td>
+    <td>batch 1 에서 ASPP image-pooling 가지의 BatchNorm(1×1 특징) 오류 회피.</td>
+    <td>ConvNeXt 와 무관. DeepLabV3+ 디코더 쪽 문제 (encoder 에는 BatchNorm 이 0 개)</td></tr>
+<tr><td><code>attach_head_dropout()</code><br><span class="src">:313-326</span></td>
+    <td>세그멘테이션 헤드 입력에 Dropout2d forward hook.</td>
+    <td>ConvNeXt 와 무관 (디코더 출력에 적용)</td></tr>
+<tr><td><code>export_and_encrypt_onnx()</code><br><span class="src">:1238-1270</span></td>
+    <td>더미 입력 (1,1,H,W) float, <code>dynamo=True, opset 18</code>, 전체 모델(encoder+decoder+head) 을 한 ONNX 로.</td>
+    <td>ConvNeXt 포함 전체 그래프 export</td></tr>
+</table>
+
+<h2>2. <code>tu-convnext_base</code> 의 실체 <span class="tag ok">검증</span></h2>
+<p><code>smp.encoders.get_encoder()</code> 는 이름이 <code>tu-</code> 로 시작하면 <code>TimmUniversalEncoder</code> 를 만들고, 그 안에서 timm 모델을 이렇게 만든다
+(<span class="src">segmentation_models_pytorch/encoders/timm_universal.py</span>):</p>
+<pre><code>timm.create_model("convnext_base", in_chans=1, features_only=True, output_stride=16,
+                  pretrained=False, out_indices=(0, 1, 2, 3))      # -> timm FeatureListNet</code></pre>
+<ul>
+  <li><code>features_only=True</code>: 분류 head 없이 각 stage 출력(특징맵 리스트)만 돌려주는 <code>FeatureListNet</code>. 최상위 Sequential 이 <code>stem_0, stem_1, stages_0 … stages_3</code> 으로 평탄화된다 (참조 코드 key 변환의 이유).</li>
+  <li>ConvNeXt 는 stride 4 의 patchify stem 으로 시작해 특징 축소율이 (4, 8, 16, 32) 다. smp 는 이를 "transformer-style" 로 분류해, 전통적 CNN 의 (2, 4, 8, 16, 32) 와 모양을 맞추려고 <b>1/2 자리에 채널 0 짜리 더미 텐서</b>를, 맨 앞에 입력 자체를 끼워 넣는다.</li>
+  <li>그 결과 <code>encoder.out_channels = [1, 0, 128, 256, 512, 1024]</code>, <code>encoder(x)</code> 는 길이 6 리스트 <code>[x, dummy, f4, f8, f16, f32']</code>.</li>
+  <li><code>output_stride=16</code> (DeepLabV3Plus 기본값): timm ConvNeXt 는 누적 stride 가 16 에 도달하면 다음 stage 의 downsample conv 를 stride 1 로 두고 dwconv 에 dilation 2 를 준다 (<span class="src">timm/models/convnext.py</span>, <code>if curr_stride >= output_stride and stride > 1: dilation *= stride</code>). 그래서 stage 3 출력 f32' 는 1/32 가 아니라 <b>1/16</b> 이다 (<code>feature_info.reduction() == [4, 8, 16, 16]</code>).</li>
+</ul>
+
+<h3>ConvNeXt-Base 내부 (smp 가 만든 객체에서 확인한 값)</h3>
+<table>
+<tr><th>부분</th><th>구성</th><th class="num">블록 수</th><th class="num">채널</th></tr>
+<tr><td>stem</td><td>Conv 4×4 stride 4 (in 1 → 128) + LayerNorm2d</td><td class="num">-</td><td class="num">128</td></tr>
+<tr><td>stages_0</td><td>ConvNeXtBlock ×3 (downsample 없음)</td><td class="num">3</td><td class="num">128</td></tr>
+<tr><td>stages_1</td><td>downsample(LayerNorm + Conv 2×2 s2) + Block ×3</td><td class="num">3</td><td class="num">256</td></tr>
+<tr><td>stages_2</td><td>downsample + Block ×27</td><td class="num">27</td><td class="num">512</td></tr>
+<tr><td>stages_3</td><td>downsample(Conv 2×2 <b>s1</b>) + Block ×3, dwconv <b>dilation 2</b></td><td class="num">3</td><td class="num">1024</td></tr>
+</table>
+<p>ConvNeXtBlock = depthwise Conv 7×7 → LayerNorm → Linear(C→4C) → GELU → Linear(4C→C) → LayerScale(gamma) → residual.
+encoder 안에 BatchNorm 은 0 개, LayerNorm 40 개, GELU 36 개. smp 가 <code>drop_path_rate</code> 를 넘기지 않아 stochastic depth 는 꺼져 있다 (<code>drop_path = Identity</code>).</p>
+
+<h2>3. 데이터 흐름 (입력 848×1056, 참조 코드 IMG_HEIGHT/WIDTH) <span class="tag ok">검증</span></h2>
+<p class="legend"><span style="background:var(--box)"></span>ConvNeXt encoder &nbsp; <span style="background:var(--box2)"></span>DeepLabV3+ decoder (smp) &nbsp; <span style="background:var(--box3)"></span>segmentation head (smp)</p>
+<div class="flow">
+  <div class="node"><b>입력</b>(1,1,848,1056) gray /255</div>
+  <div class="node enc"><b>stem + stages_0</b>f4 (1,128,212,264) 1/4</div>
+  <div class="node enc"><b>stages_1</b>f8 (1,256,106,132) 1/8 <br><i>디코더 미사용</i></div>
+  <div class="node enc"><b>stages_2</b>f16 (1,512,53,66) 1/16 <br><i>디코더 미사용</i></div>
+  <div class="node enc"><b>stages_3 (dilated)</b>f32' (1,1024,53,66) 1/16</div>
+</div>
+<div class="flow">
+  <div class="node dec"><b>ASPP</b> f32' → 1×1 conv, separable atrous 3×3 ×3 (rate 12/24/36), image pooling → concat 1280 → 1×1 → 256 (+Dropout 0.5) → separable 3×3<br>(1,256,53,66)</div>
+  <div class="node dec"><b>bilinear ×4</b>(1,256,212,264)</div>
+  <div class="node dec"><b>block1</b> f4 → 1×1 conv 48ch<br>(1,48,212,264)</div>
+  <div class="node dec"><b>concat + block2</b> (1,304,…) → separable 3×3<br>(1,256,212,264)</div>
+  <div class="node head"><b>head</b> 1×1 conv → (1,3,212,264) → bilinear ×4 → <b>(1,3,848,1056)</b> logits</div>
+</div>
+<p>즉 ConvNeXt 의 역할은 "<b>1/4 해상도의 저수준 특징(f4) 과 1/16 해상도의 고수준 특징(f32') 두 장을 뽑는 것</b>" 까지다. 그 뒤의 다중 스케일 문맥(ASPP), 저수준 융합, 업샘플, 클래스 예측은 전부 smp DeepLabV3+ 모듈이 한다.
+출력 해상도 복원은 학습되지 않는 bilinear ×4 두 번(1/16→1/4, 1/4→1/1)이라 경계 정밀도는 1/4 특징맵이 상한이다 <span class="tag inf">추정: DeepLabV3+ 논문 구조 그대로이며 참조 코드가 손대지 않음</span>.</p>
+
+<h2>4. 파라미터와 사전학습 가중치 <span class="tag ok">검증</span></h2>
+<table>
+<tr><th>부분</th><th class="num">파라미터</th><th class="num">비율</th><th>학습 여부</th></tr>
+<tr><td>encoder (ConvNeXt-Base, 1ch stem)</td><td class="num">87,560,320</td><td class="num">98.0%</td><td>전부 학습 (requires_grad True, 동결 코드 없음)</td></tr>
+<tr><td>decoder (ASPP + block1/2)</td><td class="num">1,824,784</td><td class="num">2.0%</td><td>학습 (무작위 초기화)</td></tr>
+<tr><td>segmentation_head (1×1 conv, 3 클래스)</td><td class="num">771</td><td class="num">0.0%</td><td>학습</td></tr>
+<tr><td><b>합계</b></td><td class="num"><b>89,385,875</b></td><td class="num">100%</td><td>Adam lr 5e-4 단일 그룹</td></tr>
+</table>
+<table>
+<tr><th>사전학습 파일 (model.safetensors, 338.0 MB)</th><th class="num">텐서 수</th></tr>
+<tr><td>파일 전체 (timm convnext_base.fb_in22k_ft_in1k, ImageNet-22k 사전학습 → 1k 미세조정 분류 모델)</td><td class="num">344</td></tr>
+<tr><td>버림: <code>head.norm.weight/bias</code>, <code>head.fc.weight/bias</code> (ImageNet 1000 클래스 분류기)</td><td class="num">4</td></tr>
+<tr><td>그대로 로드 (shape 일치)</td><td class="num">339</td></tr>
+<tr><td>stem conv: (128,3,4,4) RGB → 채널 합산 → (128,1,4,4)</td><td class="num">1</td></tr>
+<tr><td><b>encoder 에 로드된 텐서 / encoder 전체</b></td><td class="num"><b>340 / 340</b></td></tr>
+</table>
+<div class="note">참조 코드가 <code>encoder_weights=None</code> 으로 두고 직접 로드하는 이유 <span class="tag inf">추정</span>: smp 의 <code>encoder_weights="imagenet"</code> 는 timm 의 HF 다운로드를 내부에서 호출하는데, 사내망/오프라인 환경에서 파일 경로를 직접 통제하고 1채널 stem 변환을 명시적으로 하려는 것으로 보인다 (pretrained_weights.py 의 SSL 우회 옵션이 그 정황).</div>
+
+<h2>5. 정리: ConvNeXt 가 "하는 일" 과 "하지 않는 일"</h2>
+<table>
+<tr><th style="width:50%">ConvNeXt 가 하는 일</th><th>ConvNeXt 가 하지 않는 일 (smp DeepLabV3+ 또는 참조 코드 몫)</th></tr>
+<tr><td>
+<ul>
+<li>입력 이미지에서 1/4, 1/8, 1/16, 1/16(dilated) 특징맵 4 장 추출</li>
+<li>ImageNet-22k 사전학습 특징 제공 (학습 이미지가 적어도 수렴)</li>
+<li>미세조정으로 PCB/금형 도메인에 적응 (encoder 가중치도 갱신됨)</li>
+</ul></td><td>
+<ul>
+<li>클래스 예측 (head 1×1 conv) / 다중 스케일 문맥 (ASPP) / 저수준 융합 (block1, block2)</li>
+<li>해상도 복원 (bilinear ×4 ×2)</li>
+<li>손실 (sigmoid + MSE + Dice, 다중 라벨), 클래스 가중치, dropout hook, batch-1 BN 처리</li>
+<li>ImageNet 분류 (head 버림), 입력 정규화 (참조 코드는 /255 만 하고 mean/std 정규화 없음)</li>
+</ul></td></tr>
+</table>
+<p>참고: 참조 코드 주석은 "입력 크기가 output stride(32)의 배수여야 한다" 고 적었지만, smp 의 <code>check_input_shape()</code> 는 <code>encoder.output_stride</code> = min(16, 2<sup>5</sup>) = <b>16</b> 의 배수만 검사한다 (848, 1056 은 32 의 배수이기도 해서 실행에는 차이 없음).</p>
+
+<h2>6. 새 모델 R6 (<code>unet_model_convnext.py</code>) 은 무엇을 차용했나 <span class="tag ok">검증</span></h2>
+<table>
+<tr><th style="width:20%">항목</th><th style="width:40%">참조 코드 (DeepLabV3+)</th><th>R6 (백본만 차용)</th></tr>
+<tr><td>백본</td><td>smp TimmUniversalEncoder → timm <code>convnext_base</code> features_only, <code>output_stride=16</code> (stage 3 dilation)</td><td>timm <code>convnext_base</code> features_only <b>직접</b> 생성, output_stride 32 (dilation 없음, 특징 (4, 8, 16, 32)). smp 래퍼와 더미 텐서 없음</td></tr>
+<tr><td>사전학습</td><td>같은 safetensors, key 변환 <code>stages.0. → stages_0.</code>, head 버림, stem RGB 합산 (1ch)</td><td>같은 파일, 같은 key 변환 (prefix <code>model.</code> 만 없음), head 버림, stem RGB → <b>BGR 재배열</b> (데이터셋이 OpenCV BGR 3ch). 340/340 로드 확인</td></tr>
+<tr><td>입력 전처리</td><td>gray /255 (mean/std 정규화 없음)</td><td>BGR /255 → ImageNet mean/std 정규화를 <b>모델 안</b>에서 (버퍼). 사전학습이 본 분포에 맞춤</td></tr>
+<tr><td>디코더</td><td>ASPP(1/16) → bilinear ×4 → f4 융합 → 1/4 에서 종료</td><td>f32 → f16 → f8 → f4 → s2(1/2) → s1(1/1): nearest ×2 + 1×1 reduce + 덧셈 skip + 3×3 conv (R5 Up). 4 특징 전부 사용. 1/2, 1/1 은 입력에서 만든 경량 가지(inc, down1)</td></tr>
+<tr><td>해상도 복원</td><td>bilinear ×4 (head) — 1/4 특징이 상한</td><td>full-res 까지 학습되는 skip (hole 지름 ~50px 경계 목적)</td></tr>
+<tr><td>파라미터</td><td>89,385,875 (encoder 87.56M)</td><td>88,833,955 (encoder 87,564,416 + 디코더 1,269,539)</td></tr>
+<tr><td>학습률</td><td>Adam 5e-4 단일</td><td>Adam encoder 1e-4 / decoder 1e-3 (사전학습 보호)</td></tr>
+<tr><td>정규화(regularization)</td><td>drop_path 0, 헤드 Dropout hook 옵션</td><td>drop_path_rate 0.1 (학습 22장)</td></tr>
+<tr><td>손실</td><td>sigmoid + MSE + Dice</td><td>BCEWithLogits + Dice, 클래스 가중치 (기존 스크립트 그대로)</td></tr>
+<tr><td>입력 크기</td><td>848×1056 (16 의 배수 필요)</td><td>1088×1344 (32 의 배수 필요; 원본 1104×1358 의 1.4% 축소)</td></tr>
+<tr><td>학습 메모리</td><td>(미측정)</td><td>batch 2 AMP 9.89 GB, step 0.235 s. batch 4 는 gradient checkpointing 으로 10.99 GB / 0.59 s (없으면 18.5 GB → 공유 메모리로 넘쳐 9.5 s)</td></tr>
+<tr><td>배포 인터페이스</td><td>float 입력 → float logits, dynamo export opset 18</td><td>R5 와 동일: uint8 BGR 입력 → uint8 비트 패킹 마스크, opset 19. ORT 와 비트 단위 일치(0 px 차이), logits 차 5e-7</td></tr>
+</table>
+<p>2 epoch 연기 테스트(배치 2, 클래스 가중치 1/1/4)에서 terminal IoU 0.81, pcb 0.83 (recall 1.0) 이 이미 나왔다. R5 는 같은 수준까지 수백 epoch 이 걸렸다. hole 은 2 epoch 으로는 아직 학습 전(0.008)이며, 본 학습에서 확인할 항목이다.</p>
+
+<h2>7. 검증에 쓴 실행</h2>
+<ul>
+  <li><code>analyze_reference.py</code>: 참조 <code>build_model()</code> 재현 → 파라미터, feature shape, ASPP 내부 shape, dilation, 사전학습 key 매칭 수 (위 표의 숫자)</li>
+  <li><code>python unet_model_convnext.py</code>: 자체 테스트 (파라미터, 사전학습 340/340, 256×320 / 1088×1344 forward, deploy 비트 패킹 복원 0 px 불일치, 32 배수 아닌 입력 거부)</li>
+  <li><code>step_mem.py</code>: stem BGR 재배열 / 1ch 합산 확인, batch·channels_last·checkpointing 별 메모리와 step 시간, 추론 batch 4 fp16 29 ms/img 2.59 GB</li>
+  <li><code>export_r6.py</code>: deploy ONNX export (ops: Conv 56, MatMul 72, LayerNormalization 40, Erf 36, Transpose 80, Resize 5 …) + ORT 비교</li>
+  <li><code>unet_patterning_train_test_fp32_pcb.py train/test</code>: 2 epoch 학습과 test 모드 (스크래치 폴더에서 실행, 종료 코드 0)</li>
+</ul>
+</main>
+</body>
+</html>

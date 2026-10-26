@@ -1,0 +1,24 @@
+# python
+__pycache__/
+*.pyc
+
+# 데이터 / 학습·변환 산출물 (용량이 크고 재생성 가능)
+crop_dataset/
+output/
+result/
+inference/
+loss_plot/
+client_result/
+server_result/
+*.pt
+*.onnx
+*.engine
+*.cache
+
+# light UNet (R5) 은 현재 파이프라인(R6 UNet_ConvNeXt) 에서 쓰지 않으므로 저장소에서 제외
+model/unet_light.py
+model/docs/unet_light_flowchart.html
+accuracy.md
+
+# 편집기
+.vscode/
